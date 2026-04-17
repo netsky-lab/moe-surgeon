@@ -289,7 +289,13 @@ class Gemma4Backend:
             expected_experts=topology.num_experts,
             tensor_key=tensor_keys["router_per_expert_scale"],
         )
-        self._validate_router_scale(scale_shape, bundle=bundle, layer=layer, tensor_key=tensor_keys["router_scale"])
+        self._validate_router_scale(
+            scale_shape,
+            bundle=bundle,
+            layer=layer,
+            expected_hidden_size=topology.hidden_size,
+            tensor_key=tensor_keys["router_scale"],
+        )
 
         return RouterState(
             layer_index=layer.layer_index,
@@ -874,15 +880,16 @@ class Gemma4Backend:
         *,
         bundle: LoadedBackendBundle,
         layer: LayerTopology,
+        expected_hidden_size: int,
         tensor_key: str,
     ) -> None:
-        if shape not in ((), (1,)):
+        if shape not in ((), (1,), (expected_hidden_size,)):
             raise TopologyMismatchError(
-                "Gemma4 router scale must be scalar",
+                "Gemma4 router scale must be scalar or hidden-size vector",
                 model_id=bundle.model_handle.model_id,
                 layer_index=layer.layer_index,
                 tensor_key=tensor_key,
-                expected_shape=(),
+                expected_shape=(expected_hidden_size,),
                 actual_shape=shape,
             )
 

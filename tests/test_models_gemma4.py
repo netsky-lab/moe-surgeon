@@ -211,6 +211,20 @@ def test_gemma4_backend_router_and_expert_state_validate_shapes() -> None:
     backend.validate_layer(bundle, layer=layer, router_state=router_state)
 
 
+def test_gemma4_backend_accepts_hidden_size_router_scale_shape() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    state_dict["model.language_model.layers.0.router.scale"] = FakeTensor((2816,))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    layer = backend.extract_topology(bundle)[0]
+    router_state = backend.extract_router_state(bundle, layer=layer)
+
+    assert router_state.projection_shape == (128, 2816)
+    backend.validate_layer(bundle, layer=layer, router_state=router_state)
+
+
 def test_gemma4_backend_resolves_runtime_router_module_from_topology() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[0])
@@ -344,11 +358,24 @@ def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_mis
     backend = Gemma4Backend()
     signature = BackendSignature.from_mapping(_gemma4_config())
 
+    def fake_import_module(name: str) -> object:
+        if name == "transformers":
+            return SimpleNamespace(AutoTokenizer=object())
+        if name == "torch":
+            return SimpleNamespace()
+        raise AssertionError(name)
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
+
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
-        backend.load(signature)
+        try:
+            backend.load(signature)
+        finally:
+            monkeypatch.undo()
 
     message = str(exc_info.value)
-    assert "installed_transformers_version=4.51.3" in message
+    assert "installed_transformers_version=" in message
     assert "required_symbol=Gemma4ForConditionalGeneration" in message
     assert "support_added_on=2026-04-01" in message
 

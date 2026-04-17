@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserved the pinned `tiny-random/gemma-4-moe` snapshot revision in the live Gemma4 profiler integration helper, strengthened generation-path assertions so live forward and generation captures both validate the full router output contract, updated Gemma4 router-scale validation to accept the hidden-size vector shape used by live Transformers Gemma4 routers, and relaxed runtime aggregation to accept signed finite router weights emitted after learned per-expert scaling.
 - Added offline-safe runtime profiling utilities in
   `src/moe_surgeon/runtime/profiler.py` and `src/moe_surgeon/runtime/bench.py`,
   including context-managed router hook attach/detach, backend-driven router
