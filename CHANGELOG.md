@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added a root `typecheck` script in `package.json` for the canonical
+  `python -m mypy src` quality gate and a `metrics` aggregate script so repo
+  automation now covers lint, type checking, and tests instead of only two
+  metrics.
+- Added `tests/test_repo_metrics.py` to lock the automated script wiring to the
+  `AGENTS.md` quality contract and updated `README.md` with the repo-level
+  quality commands.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented

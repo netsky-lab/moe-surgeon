@@ -90,3 +90,10 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Install in editable mode with `python -m pip install -e .`.
 - Run help with `python -m moe_surgeon --help` or the installed `moe-surgeon --help` script.
 - The bootstrap CLI exposes placeholder `scan`, `bench`, `prune`, and `export` commands without importing model/runtime backends during help parsing.
+
+## Quality commands
+
+- Run `npm run lint` for the Ruff gate defined in `AGENTS.md`.
+- Run `npm run typecheck` for the `python -m mypy src` gate.
+- Run `npm test` for the `python -m pytest` suite.
+- Run `npm run metrics` to execute the full automated repo metrics set: lint, typecheck, then tests.
