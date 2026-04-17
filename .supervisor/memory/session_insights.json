@@ -22,5 +22,13 @@
       "create-backend-protocol,-registry,-and-diagnostic-domain-errors"
     ],
     "timestamp": "2026-04-17T05:11:35.664Z"
+  },
+  {
+    "taskTitle": "Implement Gemma4 backend loader and topology discovery",
+    "summary": "**Fixed**\n1. Hybrid topology validation in [src/moe_surgeon/models/gemma4.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py) now requires the dense companion keys seen in the published Gemma4 weight map, not just router/expert tensors. I added `mlp.down_proj.weight`, `mlp.gate_p",
+    "tags": [
+      "implement-gemma4-backend-loader-and-topology-discovery"
+    ],
+    "timestamp": "2026-04-17T05:50:25.454Z"
   }
 ]
