@@ -1,7 +1,74 @@
 {
-  "tasks": {},
+  "tasks": {
+    "3df991c5-0178-48fe-8d87-eb2c48233549": {
+      "attempts": [
+        {
+          "approach": "[Build static router weight extractor]: **Execution Summary**\n\nSubtask status:\n1. Done\n2. Done\n3. Not done in this task. PM feedback explicitly scoped CLI/output-writer work out of P5, so I stopped at static scan + metrics.\n\nWhat changed:\n- [src/moe_surgeon/analysis/metrics.py](/home/netsky/dev/labs",
+          "success": false,
+          "error": "`tests/test_analysis_scan.py:152-222` covers the happy path, determinism, and topology-only metadata, but it never exercises the `_require_tensor()` error branches in `src/moe_surgeon/analysis/scan.py",
+          "verifyConfidence": 89,
+          "issues": [
+            "`tests/test_analysis_scan.py:152-222` covers the happy path, determinism, and topology-only metadata, but it never exercises the `_require_tensor()` error branches in `src/moe_surgeon/analysis/scan.py:100-132` for a materialized `state_dict` with a missing required router tensor or a non-`torch.Tensor` payload. The PM explicitly required missing numeric tensor payload coverage, so that criterion is not met.",
+            "`tests/test_analysis_scan.py` also lacks a regression that drives `scan_model()` through router-tensor shape failures enforced by `Gemma4Backend.extract_router_state()` / `validate_layer()` in `src/moe_surgeon/models/gemma4.py:262-289` and `:373-396`. Existing shape-mismatch tests in `tests/test_models_gemma4.py` only cover expert tensors, not the scan analyzer path or the router tensors it consumes, so the PM's shape-mismatch coverage requirement is still unmet."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T06:18:49.939Z"
+        },
+        {
+          "approach": "Fixed the two verification gaps in [tests/test_analysis_scan.py](/home/netsky/dev/labs/moe-surgeon/tests/test_analysis_scan.py).\n\n1. Added direct `_require_tensor()` regressions for a materialized `state_dict`:\n- missing required router tensor payload now raises `TopologyMismatchError`\n- non-`torch.",
+          "success": false,
+          "error": "`src/moe_surgeon/analysis/metrics.py:37,48,84,93,96` still raises generic `ValueError` for malformed scan inputs. I reproduced this through the real scan path with a NaN `router.proj.weight`, and `sca",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/analysis/metrics.py:37,48,84,93,96` still raises generic `ValueError` for malformed scan inputs. I reproduced this through the real scan path with a NaN `router.proj.weight`, and `scan_model()` surfaced `ValueError: router_probabilities must be finite` with no model/layer/tensor context. That violates the AGENTS.md error contract and means the task is not complete.",
+            "`src/moe_surgeon/analysis/metrics.py:202` still contains a production `assert isinstance(item, ExpertStats)`. If that invariant is ever violated, the analyzer will leak `AssertionError` instead of an explicit domain error. Replace it with explicit validation or remove the assertion from production code.",
+            "`tests/test_analysis_scan.py` now covers missing materialized tensors, non-tensor payloads, and backend-enforced router shape mismatches, but it still lacks a regression for malformed metric inputs such as non-finite router weights or invalid `per_expert_scale` rank. Add coverage that `scan_model()` converts those failures into domain errors with layer/tensor diagnostics."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T07:10:15.598Z"
+        }
+      ],
+      "stuckSince": null
+    },
+    "350a6c03-4ae3-42f6-8de0-0c2aae9e845b": {
+      "attempts": [
+        {
+          "approach": "[Create profiler instrumentation utility]: **Execution Summary**\n\n[1] Done. Added the runtime profiler core in [src/moe_surgeon/runtime/profiler.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/runtime/profiler.py) plus the compatibility import in [src/moe_surgeon/runtime/bench.py](/home/netsky",
+          "success": false,
+          "error": "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_pr",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_probabilities, top_k_weights, top_k_index)` and the decoder consumes `_, top_k_weights, top_k_index = self.router(...)`. Because `src/moe_surgeon/models/gemma4.py:402-412` hooks `layer.router`, real Gemma4 runs will fail with `top_k_indices last dimension mismatch` instead of collecting activations, so the task’s core runtime-capture acceptance is not met.",
+            "`src/moe_surgeon/runtime/profiler.py:421,429-430,488,494,546,652` raises `ShapeInvariantViolationError` without the required model/layer diagnostic context on several malformed-output branches. The PM criteria asked for detailed diagnostics; today a bad tuple shape reproduces as only `router forward output sequence must contain 2 or 3 items` with no `model_id` or `layer_index`.",
+            "`tests/test_runtime_profiler.py` only exercises synthetic dict/object outputs and basic padding aggregation. It does not cover the actual Gemma4 router tuple contract, malformed container branches, missing optional score capture, or out-of-range expert indices, so the new runtime path is not adequately verified against the backend it is supposed to support."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T06:58:04.996Z"
+        }
+      ],
+      "stuckSince": null
+    },
+    "f6b8a2ff-8830-480d-8a41-4c2e562255b4": {
+      "attempts": [
+        {
+          "approach": "**What Changed**\n\nUpdated [package.json](/home/netsky/dev/labs/moe-surgeon/package.json) to add `typecheck: python -m mypy src` and `metrics: npm run lint && npm run typecheck && npm test`, so the repo now exposes a single aggregate metrics path that includes the AGENTS type-check gate.\n\nAdded [test",
+          "success": false,
+          "error": "Task requirement is only partially implemented: [package.json](/home/netsky/dev/labs/moe-surgeon/package.json:6) adds `typecheck` and `metrics`, but no CI/supervisor collector wiring was changed, and ",
+          "verifyConfidence": 97,
+          "issues": [
+            "Task requirement is only partially implemented: [package.json](/home/netsky/dev/labs/moe-surgeon/package.json:6) adds `typecheck` and `metrics`, but no CI/supervisor collector wiring was changed, and the authoritative supervisor log still ends with `Metrics: 2/2 passed` in [.supervisor/logs/task-f6b8a2ff.log](/home/netsky/dev/labs/moe-surgeon/.supervisor/logs/task-f6b8a2ff.log:2). Add the missing supervisor/CI metric configuration so `typecheck` is collected as its own automated check or the collector runs `npm run metrics`.",
+            "The new regression test is too narrow for the stated goal: [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py:7) only asserts literal `package.json` script strings and does not verify that the real supervisor/CI path executes or reports mypy coverage. Add coverage for the actual metric collector wiring, or an integration check that fails when typecheck is omitted from automated metrics.",
+            "Repo docs/changelog now claim automation covers lint, typecheck, and tests ([README.md](/home/netsky/dev/labs/moe-surgeon/README.md:96), [CHANGELOG.md](/home/netsky/dev/labs/moe-surgeon/CHANGELOG.md:5)), but the authoritative machine-check output still reports only `code_quality/lint` and `tests/test_suite`. Update the automation first, then keep the docs aligned with what is actually enforced."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T07:19:04.716Z"
+        }
+      ],
+      "stuckSince": null
+    }
+  },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T05:50:25.454Z"
+    "lastUpdated": "2026-04-17T07:19:04.716Z"
   }
 }
