@@ -1,0 +1,10 @@
+[
+  {
+    "taskTitle": "Define canonical data contracts and JSON serialization schema",
+    "summary": "Implemented and committed as `63aaaff` with message `fix: address verify issues - schema roundtrip and test coverage`.\n\nI fixed all four verifier issues. In [schemas.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/schemas.py), `model_handle` mapping payloads are now coerced for both `PrunePlan",
+    "tags": [
+      "define-canonical-data-contracts-and-json-serialization-schema"
+    ],
+    "timestamp": "2026-04-17T04:10:02.954Z"
+  }
+]
