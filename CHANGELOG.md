@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added CLI version smoke coverage in `tests/test_cli.py` for both
+  `python -m moe_surgeon --version` and the installed `moe-surgeon --version`
+  entrypoint by running each path in a fresh process and asserting the version
+  path does not import `torch`, `transformers`, or `safetensors`.
 - Replaced the installed-supervisor collector regression with a repo-config
   integration test in `tests/test_repo_metrics.py` that resolves this repo's
   `.supervisor/project.json` through the live collector path and fails if the
