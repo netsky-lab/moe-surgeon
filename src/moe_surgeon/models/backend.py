@@ -1,16 +1,20 @@
 """Backend protocol contracts for lightweight model-family adapters.
 
-This module intentionally stays import-light and does not import the
-registry implementation.
+This module intentionally stays import-light. The legacy
+``from moe_surgeon.models.backend import BackendRegistry`` import path is
+preserved through a lazy module attribute to avoid a circular import.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
+
+if TYPE_CHECKING:
+    from moe_surgeon.models.registry import BackendRegistry as BackendRegistry
 
 
 @dataclass(frozen=True)
@@ -152,7 +156,19 @@ class ModelBackend(Protocol):
         """Validate layer-level topology and routing invariants."""
 
 
+def __getattr__(name: str) -> object:
+    """Lazily resolve compatibility exports without importing them on module load."""
+
+    if name != "BackendRegistry":
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+    from moe_surgeon.models.registry import BackendRegistry
+
+    return BackendRegistry
+
+
 __all__ = [
+    "BackendRegistry",
     "BackendSignatureInput",
     "BackendSignature",
     "coerce_backend_signature",

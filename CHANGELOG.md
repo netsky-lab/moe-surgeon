@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restored the `moe_surgeon.models.backend.BackendRegistry` compatibility
+  import as a lazy export so the legacy import path still works without
+  recreating the `backend.py`/`registry.py` circular import or adding import
+  weight to plain `import moe_surgeon.models.backend`.
+- Added fresh-process regression coverage for `moe_surgeon.models.backend`,
+  `moe_surgeon.models.registry`, and the compatibility `BackendRegistry` import
+  path while asserting `torch`, `transformers`, and `safetensors` stay unloaded.
 - Tightened `models/backend.py` and `models/registry.py` so backend resolution
   accepts either lightweight config mappings or explicit signatures while
   preserving deterministic priority/name ordering and explicit compatibility

@@ -132,15 +132,20 @@ def test_coerce_backend_signature_accepts_plain_config_mappings() -> None:
 
 
 @pytest.mark.parametrize(
-    ("module_name", "import_statement"),
+    ("module_name", "import_statement", "forbidden_modules"),
     (
-        ("moe_surgeon.models.backend", "import moe_surgeon.models.backend"),
-        ("moe_surgeon.models.registry", "import moe_surgeon.models.registry"),
+        (
+            "moe_surgeon.models.backend",
+            "import moe_surgeon.models.backend",
+            ("moe_surgeon.models.registry",),
+        ),
+        ("moe_surgeon.models.registry", "import moe_surgeon.models.registry", ()),
     ),
 )
 def test_model_modules_import_in_fresh_process_without_heavy_dependencies(
     module_name: str,
     import_statement: str,
+    forbidden_modules: tuple[str, ...],
 ) -> None:
     probe = f"""
 import sys
@@ -149,6 +154,8 @@ import sys
 
 forbidden = [name for name in ("torch", "transformers", "safetensors") if name in sys.modules]
 assert not forbidden, forbidden
+unexpected = [name for name in {forbidden_modules!r} if name in sys.modules]
+assert not unexpected, unexpected
 print("{module_name}")
 """
 
@@ -161,6 +168,30 @@ print("{module_name}")
 
     assert result.returncode == 0, result.stderr or result.stdout
     assert result.stdout.strip() == module_name
+
+
+def test_backend_registry_compatibility_alias_imports_in_fresh_process() -> None:
+    probe = """
+import sys
+
+from moe_surgeon.models.backend import BackendRegistry
+from moe_surgeon.models.registry import BackendRegistry as CanonicalBackendRegistry
+
+assert BackendRegistry is CanonicalBackendRegistry
+forbidden = [name for name in ("torch", "transformers", "safetensors") if name in sys.modules]
+assert not forbidden, forbidden
+print(BackendRegistry.__name__)
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip() == "BackendRegistry"
 
 
 def test_registry_resolves_single_backend_deterministically() -> None:
