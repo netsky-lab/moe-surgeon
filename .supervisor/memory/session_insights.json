@@ -78,5 +78,13 @@
       "implement-static-scan-analyzer-for-router-weight-utilization"
     ],
     "timestamp": "2026-04-17T09:38:47.757Z"
+  },
+  {
+    "taskTitle": "Add explicit missing-check regression test",
+    "summary": "**Changed**\nUpdated [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py) to extend the missing-check regression into a parametrized subprocess test covering both absent `lintCommand` and absent `typeCheckCommand`, asserting `--check <name>` exits non-zero and em",
+    "tags": [
+      "add-explicit-missing-check-regression-test"
+    ],
+    "timestamp": "2026-04-17T10:03:30.450Z"
   }
 ]
