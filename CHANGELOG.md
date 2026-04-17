@@ -11,6 +11,11 @@
 - Refined canonical schema contracts in `src/moe_surgeon/schemas.py` with stricter
   shape diagnostics, stable topology reference handling, and additional
   deterministic validation/tests for P1 ordering/contracts.
+- Tightened the bootstrap CLI entrypoint so the installed `moe-surgeon` script
+  calls an explicit lightweight `main()` wrapper around the Click group while
+  preserving `python -m moe_surgeon` help-only execution.
+- Expanded CLI regression coverage for package metadata exposure, wrapper-based
+  help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
 - Completed P2 package bootstrap wiring in `pyproject.toml`, `src/moe_surgeon/cli/main.py`, and `src/moe_surgeon/__main__.py` with an installable `moe-surgeon` script, module execution support, and placeholder Click subcommands (`scan`, `bench`, `prune`, `export`).

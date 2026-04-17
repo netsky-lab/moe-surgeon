@@ -4,41 +4,49 @@ from __future__ import annotations
 
 import click
 
-from moe_surgeon import PACKAGE_NAME, __version__
+from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
 
 
 @click.group(
+    name=PACKAGE_NAME,
     context_settings={"help_option_names": ["-h", "--help"]},
+    help=PACKAGE_DESCRIPTION,
     no_args_is_help=True,
 )
 @click.version_option(version=__version__, package_name=PACKAGE_NAME)
-def main() -> None:
-    """Analyze and prune mixture-of-experts checkpoints safely."""
+def cli() -> None:
+    """Top-level command group for moe-surgeon."""
 
 
-@main.command()
+@cli.command()
 def scan() -> None:
     """Inspect static router state and emit deterministic artifacts."""
 
     click.echo("scan is not implemented yet")
 
 
-@main.command()
+@cli.command()
 def bench() -> None:
     """Profile runtime expert activation without mutating checkpoints."""
 
     click.echo("bench is not implemented yet")
 
 
-@main.command()
+@cli.command()
 def prune() -> None:
     """Build deterministic prune plans from analysis artifacts."""
 
     click.echo("prune is not implemented yet")
 
 
-@main.command()
+@cli.command()
 def export() -> None:
     """Write validated derived artifacts to a new output directory."""
 
     click.echo("export is not implemented yet")
+
+
+def main(*, prog_name: str | None = None) -> None:
+    """Invoke the lightweight CLI without importing model backends."""
+
+    cli(prog_name=prog_name)
