@@ -30,5 +30,13 @@
       "implement-gemma4-backend-loader-and-topology-discovery"
     ],
     "timestamp": "2026-04-17T05:50:25.454Z"
+  },
+  {
+    "taskTitle": "Add automated mypy coverage to repo metrics",
+    "summary": "Fixed all three verifier issues.\n\n1. Supervisor-recognized enforcement path:\n- Re-verified with the actual supervisor collector implementation from the local supervisor install, not just the repo-owned collector.\n- Refreshed [.supervisor/logs/task-f6b8a2ff.metrics.json](/home/netsky/dev/labs/moe-sur",
+    "tags": [
+      "add-automated-mypy-coverage-to-repo-metrics"
+    ],
+    "timestamp": "2026-04-17T08:08:09.177Z"
   }
 ]
