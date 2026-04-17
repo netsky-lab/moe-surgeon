@@ -6,9 +6,9 @@ import pytest
 import torch
 
 from moe_surgeon.analysis.metrics import build_expert_stats, static_expert_distribution
-from moe_surgeon.analysis.scan import scan_model, scan_result_json, write_scan_artifact
+from moe_surgeon.analysis.scan import _require_tensor, scan_model, scan_result_json, write_scan_artifact
 from moe_surgeon.models.backend import LoadedBackendBundle
-from moe_surgeon.models.errors import TopologyMismatchError
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.schemas import ModelHandle
 
@@ -220,3 +220,78 @@ def test_scan_model_rejects_topology_only_state_keys_metadata() -> None:
         match="static scan requires materialized numeric tensors, not topology-only state_keys metadata",
     ):
         scan_model(bundle, backend=backend)
+
+
+def test_require_tensor_rejects_missing_materialized_router_tensor_payload() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0, shift=0.0)
+    bundle = _bundle(config=config, state_dict=state_dict)
+    layer = backend.extract_topology(bundle)[0]
+
+    materialized_state = dict(state_dict)
+    del materialized_state["model.language_model.layers.0.router.scale"]
+
+    with pytest.raises(
+        TopologyMismatchError,
+        match="static scan requires materialized numeric tensor values",
+    ) as exc_info:
+        _require_tensor(
+            materialized_state,
+            bundle=bundle,
+            layer=layer,
+            tensor_role="router_scale",
+        )
+
+    message = str(exc_info.value)
+    assert "layer_index=0" in message
+    assert "tensor_key=model.language_model.layers.0.router.scale" in message
+    assert "tensor_role=router_scale" in message
+
+
+def test_require_tensor_rejects_non_tensor_router_payload() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0, shift=0.0)
+    bundle = _bundle(config=config, state_dict=state_dict)
+    layer = backend.extract_topology(bundle)[0]
+
+    materialized_state: dict[str, object] = dict(state_dict)
+    materialized_state["model.language_model.layers.0.router.per_expert_scale"] = [0.2, 0.4, 0.1, 0.3]
+
+    with pytest.raises(
+        ShapeInvariantViolationError,
+        match="scan router tensor must be torch.Tensor",
+    ) as exc_info:
+        _require_tensor(
+            materialized_state,
+            bundle=bundle,
+            layer=layer,
+            tensor_role="router_per_expert_scale",
+        )
+
+    message = str(exc_info.value)
+    assert "layer_index=0" in message
+    assert "tensor_key=model.language_model.layers.0.router.per_expert_scale" in message
+    assert "tensor_role=router_per_expert_scale" in message
+    assert "value_type=list" in message
+
+
+def test_scan_model_rejects_router_tensor_shape_mismatch() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0, shift=0.0)
+    state_dict["model.language_model.layers.0.router.per_expert_scale"] = torch.ones(
+        (3,),
+        dtype=torch.float32,
+    )
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(TopologyMismatchError, match="Gemma4 per-expert scale shape mismatch") as exc_info:
+        scan_model(bundle, backend=backend)
+
+    message = str(exc_info.value)
+    assert "layer_index=0" in message
+    assert "tensor_key=model.language_model.layers.0.router.per_expert_scale" in message
+    assert "expected_shape=4" in message
+    assert "actual_shape=3" in message
