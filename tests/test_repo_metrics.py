@@ -5,14 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-
-def _load_package_scripts() -> dict[str, str]:
-    package_json = Path(__file__).resolve().parents[1] / "package.json"
-    payload = json.loads(package_json.read_text(encoding="utf-8"))
-    scripts = payload.get("scripts")
-    assert isinstance(scripts, dict)
-    assert all(isinstance(key, str) and isinstance(value, str) for key, value in scripts.items())
-    return scripts
+from moe_surgeon import repo_metrics
 
 
 def _load_supervisor_verify_config() -> dict[str, str | None]:
@@ -36,26 +29,45 @@ def test_supervisor_verify_config_collects_lint_typecheck_and_tests() -> None:
     }
 
 
-def test_supervisor_typecheck_command_maps_to_package_script_and_succeeds() -> None:
-    scripts = _load_package_scripts()
-    verify_config = _load_supervisor_verify_config()
+def test_collect_metrics_uses_repo_supervisor_config_and_emits_typecheck(
+    monkeypatch: object,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    recorded_calls: list[tuple[str, str, str, int]] = []
 
-    assert scripts["typecheck"] == "python -m mypy src"
-    assert scripts["metrics"] == "python -m moe_surgeon.repo_metrics"
-    assert verify_config["typeCheckCommand"] == "npm run typecheck"
+    def fake_run_check(
+        root_path: Path,
+        *,
+        category: str,
+        name: str,
+        command: str,
+        timeout_seconds: int,
+    ) -> repo_metrics.MetricCheck:
+        assert root_path == repo_root
+        recorded_calls.append((category, name, command, timeout_seconds))
+        return repo_metrics.MetricCheck(
+            category=category,
+            name=name,
+            command=command,
+            exit_code=0,
+            passed=True,
+            duration_ms=1,
+            output=f"{name} ok",
+        )
 
-    result = subprocess.run(
-        ["npm", "run", "typecheck"],
-        check=False,
-        capture_output=True,
-        text=True,
-        cwd=Path(__file__).resolve().parents[1],
-    )
+    monkeypatch.setattr(repo_metrics, "_run_check", fake_run_check)
 
-    combined_output = f"{result.stdout}\n{result.stderr}"
-    assert result.returncode == 0, combined_output
-    assert "python -m mypy src" in combined_output
-    assert "Success: no issues found" in combined_output
+    report = repo_metrics.collect_metrics(repo_root, timeout_seconds=7)
+
+    assert [check.name for check in report.checks] == ["lint", "typecheck", "tests"]
+    assert [check.category for check in report.checks] == ["code_quality", "code_quality", "tests"]
+    assert [check.command for check in report.checks] == ["npm run lint", "npm run typecheck", "npm test"]
+    assert report.summary == repo_metrics.MetricSummary(total=3, passed=3, failed=0)
+    assert recorded_calls == [
+        ("code_quality", "lint", "npm run lint", 7),
+        ("code_quality", "typecheck", "npm run typecheck", 7),
+        ("tests", "tests", "npm test", 7),
+    ]
 
 
 def test_repo_metrics_collector_emits_named_checks_and_refreshes_task_log(tmp_path: Path) -> None:
