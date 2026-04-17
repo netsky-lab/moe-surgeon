@@ -47,28 +47,10 @@
         }
       ],
       "stuckSince": null
-    },
-    "f6b8a2ff-8830-480d-8a41-4c2e562255b4": {
-      "attempts": [
-        {
-          "approach": "**What Changed**\n\nUpdated [package.json](/home/netsky/dev/labs/moe-surgeon/package.json) to add `typecheck: python -m mypy src` and `metrics: npm run lint && npm run typecheck && npm test`, so the repo now exposes a single aggregate metrics path that includes the AGENTS type-check gate.\n\nAdded [test",
-          "success": false,
-          "error": "Task requirement is only partially implemented: [package.json](/home/netsky/dev/labs/moe-surgeon/package.json:6) adds `typecheck` and `metrics`, but no CI/supervisor collector wiring was changed, and ",
-          "verifyConfidence": 97,
-          "issues": [
-            "Task requirement is only partially implemented: [package.json](/home/netsky/dev/labs/moe-surgeon/package.json:6) adds `typecheck` and `metrics`, but no CI/supervisor collector wiring was changed, and the authoritative supervisor log still ends with `Metrics: 2/2 passed` in [.supervisor/logs/task-f6b8a2ff.log](/home/netsky/dev/labs/moe-surgeon/.supervisor/logs/task-f6b8a2ff.log:2). Add the missing supervisor/CI metric configuration so `typecheck` is collected as its own automated check or the collector runs `npm run metrics`.",
-            "The new regression test is too narrow for the stated goal: [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py:7) only asserts literal `package.json` script strings and does not verify that the real supervisor/CI path executes or reports mypy coverage. Add coverage for the actual metric collector wiring, or an integration check that fails when typecheck is omitted from automated metrics.",
-            "Repo docs/changelog now claim automation covers lint, typecheck, and tests ([README.md](/home/netsky/dev/labs/moe-surgeon/README.md:96), [CHANGELOG.md](/home/netsky/dev/labs/moe-surgeon/CHANGELOG.md:5)), but the authoritative machine-check output still reports only `code_quality/lint` and `tests/test_suite`. Update the automation first, then keep the docs aligned with what is actually enforced."
-          ],
-          "session": 1,
-          "timestamp": "2026-04-17T07:19:04.716Z"
-        }
-      ],
-      "stuckSince": null
     }
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T07:19:04.716Z"
+    "lastUpdated": "2026-04-17T07:32:27.857Z"
   }
 }
