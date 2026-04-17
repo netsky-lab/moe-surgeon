@@ -8,6 +8,9 @@
   1) bootstrap, 2) model loader, 3) router analyzer, 4) runtime profiler,
   5) pruner, 6) exporter, 7) CLI commands, 8) tests and docs.
 - Added `ARCHITECTURE.md` with proposed module boundaries and data flow.
+- Refined canonical schema contracts in `src/moe_surgeon/schemas.py` with stricter
+  shape diagnostics, stable topology reference handling, and additional
+  deterministic validation/tests for P1 ordering/contracts.
 
 ## 2026-04-17
 - Completed P1 canonical schema implementation in `src/moe_surgeon/schemas.py` with typed dataclasses, canonical JSON round-trip helpers, deterministic ordering, and validation/invariant checks.

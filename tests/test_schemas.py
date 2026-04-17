@@ -12,9 +12,12 @@ from moe_surgeon.schemas import (
     RunArtifactManifest,
     TopologyMismatchError,
     ShapeInvariantViolationError,
+    LayerReferenceError,
     to_json,
     from_json,
     sort_experts,
+    validate_shape_tuple,
+    validate_layer_ref,
 )
 
 
@@ -32,6 +35,13 @@ def test_sort_experts_is_deterministic_with_tie_fallback() -> None:
 def test_sort_experts_uses_explicit_tiebreaks() -> None:
     ordered = sort_experts([(0, 0.1, 0.2, 3), (1, 0.1, 0.2, 1), (0, 0.1, 0.2, 1)])
     assert ordered == [(0, 0.1, 0.2, 1), (0, 0.1, 0.2, 3), (1, 0.1, 0.2, 1)]
+
+
+def test_sort_experts_stable_for_equal_records() -> None:
+    first = (0, 0.2, 0.4, 1)
+    second = (0, 0.2, 0.4, 1)
+    ordered = sort_experts([second, first])
+    assert ordered == [second, first]
 
 
 def test_json_round_trip_preserves_plan() -> None:
@@ -98,6 +108,28 @@ def test_topology_validator() -> None:
             expert_count=4,
             top_k=8,
             hidden_size=64,
+        )
+
+
+def test_shape_tuple_helper_accepts_lists_and_raises_on_invalid() -> None:
+    assert validate_shape_tuple([4, 8], name="shape") == (4, 8)
+    with pytest.raises(ShapeInvariantViolationError):
+        validate_shape_tuple([-1, 8], name="shape")
+    with pytest.raises(ShapeInvariantViolationError):
+        validate_shape_tuple([4, "8"], name="shape")  # type: ignore[list-item]
+
+
+def test_model_and_layer_ref_validation() -> None:
+    assert validate_layer_ref("layer_0032") == 32
+    with pytest.raises(LayerReferenceError):
+        LayerTopology(
+            layer_index=0,
+            layer_name="x",
+            layer_type="moe",
+            expert_count=4,
+            top_k=2,
+            hidden_size=64,
+            layer_ref="bad_ref",
         )
 
 

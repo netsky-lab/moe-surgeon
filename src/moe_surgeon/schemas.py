@@ -13,7 +13,20 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from math import floor, isfinite
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, Type, TypeVar, Union, get_type_hints
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Sequence,
+    Tuple,
+    Type,
+    TypeVar,
+    Union,
+    get_type_hints,
+)
 import json
 import re
 
@@ -42,7 +55,7 @@ SchemaKey = Union[str, int, float, bool, None]
 ShapeTuple = Tuple[int, ...]
 
 
-SchemaType = TypeVar("SchemaType", bound="_SchemaBase")
+_SchemaType = TypeVar("SchemaType", bound="_SchemaBase")
 
 
 def _utcnow_iso() -> str:
@@ -99,7 +112,9 @@ def _ensure_optional_positive_int(value: Any, *, name: str) -> Optional[int]:
     return _ensure_positive_int(value, name=name)
 
 
-def _ensure_shape_tuple(value: Any, *, name: str, allow_empty: bool = False) -> Optional[ShapeTuple]:
+def _ensure_shape_tuple(
+    value: Any, *, name: str, allow_empty: bool = False, require_last: int | None = None
+) -> Optional[ShapeTuple]:
     if value is None:
         return None
     if isinstance(value, tuple):
@@ -117,7 +132,27 @@ def _ensure_shape_tuple(value: Any, *, name: str, allow_empty: bool = False) -> 
         if isinstance(item, bool) or not isinstance(item, int) or item < 0:
             raise ShapeInvariantViolationError(f"{name}[{idx}] must be non-negative int")
         out.append(item)
+    if require_last is not None and len(out) > 0 and out[-1] != require_last:
+        raise ShapeInvariantViolationError(
+            f"{name} last dimension must be {require_last}"
+        )
     return tuple(out)
+
+
+def validate_shape_tuple(
+    value: Sequence[int] | list[int] | tuple[int, ...] | None,
+    *,
+    name: str,
+    allow_empty: bool = False,
+    require_last: int | None = None,
+) -> Optional[tuple[int, ...]]:
+    """Validate and normalize shape-like metadata fields.
+
+    This helper is exported for schema diagnostics and for downstream modules that
+    need a strict, deterministic check on shape payloads.
+    """
+
+    return _ensure_shape_tuple(value, name=name, allow_empty=allow_empty, require_last=require_last)
 
 
 def _canonicalize_metadata(value: Mapping[str, Any] | None) -> Dict[str, SchemaKey]:
@@ -157,6 +192,11 @@ def _canonicalize_str_tuple(values: Sequence[str] | None, *, name: str) -> Tuple
             raise SchemaValidationError(f"{name}[{i}] must be non-empty string")
         out.append(item)
     return tuple(out)
+
+
+def validate_layer_ref(layer_ref: str, *, name: str = "layer_ref") -> int:
+    """Validate canonical layer reference strings and return the parsed index."""
+    return _parse_layer_ref(layer_ref)
 
 
 def _parse_layer_ref(value: str) -> int:
@@ -290,7 +330,7 @@ class _SchemaBase:
         return data
 
     @classmethod
-    def from_dict(cls: Type[SchemaType], payload: Mapping[str, Any]) -> SchemaType:
+    def from_dict(cls: Type[_SchemaType], payload: Mapping[str, Any]) -> _SchemaType:
         kwargs = _coerce_mapping_for_payload(payload, cls)
         return cls(**kwargs)  # type: ignore[arg-type]
 
@@ -386,7 +426,8 @@ class LayerTopology(_SchemaBase):
         if self.top_k > self.expert_count:
             raise TopologyMismatchError("top_k cannot exceed expert_count")
         if self.layer_ref is not None:
-            _parse_layer_ref(self.layer_ref)
+            self.layer_ref = str(self.layer_ref)
+            validate_layer_ref(self.layer_ref)
         self.module_paths = {str(k): str(v) for k, v in self.module_paths.items()}
         self.metadata = _canonicalize_metadata(self.metadata)
         self.is_moe = _ensure_bool(self.is_moe, name="is_moe")
@@ -430,11 +471,13 @@ class RouterState(_SchemaBase):
             self.top_k_indices_shape,
             name="top_k_indices_shape",
             allow_empty=False,
+            require_last=self.top_k,
         )
         self.top_k_weights_shape = _ensure_shape_tuple(
             self.top_k_weights_shape,
             name="top_k_weights_shape",
             allow_empty=False,
+            require_last=self.top_k,
         )
         self.projection_shape = _ensure_shape_tuple(self.projection_shape, name="projection_shape", allow_empty=True)
         self.per_expert_scale_shape = _ensure_shape_tuple(
@@ -447,6 +490,10 @@ class RouterState(_SchemaBase):
             if len(self.top_k_indices_shape) != len(self.top_k_weights_shape):
                 raise ShapeInvariantViolationError(
                     "top_k_indices_shape and top_k_weights_shape must have same rank"
+                )
+            if self.top_k_indices_shape[-1] != self.top_k:
+                raise ShapeInvariantViolationError(
+                    "top_k_indices_shape last dimension must equal top_k"
                 )
 
         self.has_router_probabilities = _ensure_bool(self.has_router_probabilities, name="has_router_probabilities")
@@ -567,6 +614,8 @@ class ActivationStats(_SchemaBase):
         if self.density is not None:
             self.density = _ensure_float(self.density, name="density")
         self.metadata = _canonicalize_metadata(self.metadata)
+        if self.n_tokens < self.token_count:
+            raise SchemaValidationError("n_tokens must be >= token_count")
 
     @property
     def occupancy(self) -> float:
@@ -901,9 +950,9 @@ def sort_topology(layers: Iterable[LayerTopology], *, with_ref_fallback: bool = 
     """Sort topologies by layer index with deterministic reference fallback."""
     def _key(layer: LayerTopology) -> tuple[int, int, str, str]:
         ref_value = layer.layer_ref or layer.layer_name or ""
-        ref_rank = -_parse_layer_ref(layer.layer_id)
+        ref_rank = layer.layer_index
         if with_ref_fallback and layer.layer_ref is not None:
-            ref_rank = _parse_layer_ref(layer.layer_ref)
+            ref_rank = validate_layer_ref(layer.layer_ref)
         return (layer.layer_index, ref_rank, len(layer.module_paths), ref_value)
 
     return tuple(sorted(layers, key=_key))
@@ -940,7 +989,7 @@ def _schema_name_to_ctor() -> MutableMapping[str, Type[_SchemaBase]]:
 
 
 def _construct_from_payload(payload: Mapping[str, Any]) -> SchemaType:
-    schema_type = payload.get("__schema_type")
+    schema_type = payload.get("__schema_type") or payload.get("schema_type")
     if not isinstance(schema_type, str):
         raise SchemaValidationError("Missing __schema_type")
     mapping = dict(payload)
@@ -953,7 +1002,7 @@ def _construct_from_payload(payload: Mapping[str, Any]) -> SchemaType:
     return ctor.from_dict(mapping)  # type: ignore[return-value]
 
 
-def from_json(payload: Union[str, Mapping[str, Any], list[Any]]) -> Any:
+def from_json(payload: Union[str, Mapping[str, Any], list[Any], tuple[Any, ...]]) -> Any:
     """Deserialize canonical JSON back into schema objects."""
     data = json.loads(payload) if isinstance(payload, str) else payload
 
@@ -972,6 +1021,8 @@ def from_json(payload: Union[str, Mapping[str, Any], list[Any]]) -> Any:
 
     if isinstance(data, list):
         return [from_json(item) if isinstance(item, (str, dict, list)) else item for item in data]
+    if isinstance(data, tuple):
+        return tuple(from_json(item) if isinstance(item, (str, dict, list, tuple)) else item for item in data)
 
     raise SchemaValidationError("Unsupported payload type")
 
@@ -990,6 +1041,8 @@ __all__ = [
     "CANONICAL_SCHEMA_VERSION",
     "CANONICAL_FLOAT_EPSILON",
     "SchemaType",
+    "validate_shape_tuple",
+    "validate_layer_ref",
     "ModelHandle",
     "LayerTopology",
     "RouterState",
