@@ -1,6 +1,0 @@
-[tool.mypy]
-python_version = "3.11"
-incremental = false
-
-[tool.pytest.ini_options]
-addopts = ["--disable-plugin-autoload", "--basetemp=.tmp/pytest"]

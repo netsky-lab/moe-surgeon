@@ -1,50 +1,5 @@
 {
   "tasks": {
-    "61e5ba78-020e-4ca8-910c-9611b9f25e47": {
-      "attempts": [
-        {
-          "approach": "[Define strategy protocol and registry]: **Implemented**\nSubtask status:\n1. Done: added [strategies.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/prune/strategies.py) with a typed `PruneStrategy` protocol, immutable strategy metadata, registry/factory lookup, and built-in `frequency`, `route",
-          "success": false,
-          "error": "`PlannerConstraints.__post_init__` silently coerces override keys with `int(layer)` and never validates override values, so invalid inputs like `PlannerConstraints(layer_overrides={1.5: None})` are ac",
-          "verifyConfidence": 95,
-          "issues": [
-            "`PlannerConstraints.__post_init__` silently coerces override keys with `int(layer)` and never validates override values, so invalid inputs like `PlannerConstraints(layer_overrides={1.5: None})` are accepted as `{1: None}` instead of failing fast. That later explodes with raw `AttributeError` in `canonical_payload()`/`plan_constraints()` (`src/moe_surgeon/prune/planner.py:65-123`). Validate key types and require `LayerConstraintOverride` instances with explicit planner diagnostics.",
-            "`LayerConstraintOverride.__post_init__` only checks numeric bounds, not integer types. `LayerConstraintOverride(min_experts=1.2)` is accepted and `build_prune_plan()` later crashes with raw `TypeError: slice indices must be integers...` in `_selected_keep_indices()` (`src/moe_surgeon/prune/planner.py:41-53`, `284-305`). Reject non-integer constraint values up front.",
-            "Per-layer exact targets can undercut the configured minimum-survivor guardrail. `build_prune_plan(..., constraints=PlannerConstraints(min_experts_per_layer=2, layer_overrides={0: LayerConstraintOverride(target_experts=1)}))` succeeds and emits a plan keeping only one expert, because `_layer_budgets()` overwrites `minimum_keep` with `target_experts` (`src/moe_surgeon/prune/planner.py:233-240`). This violates the task’s minimum-survivor requirement and the PM criterion around per-layer targets below `min_experts_per_layer`.",
-            "`tests/test_prune_planner.py` does not cover the failing constraint-validation branches above, so the suite stays green while invalid planner inputs still crash or bypass guardrails. Add regression tests for non-integer/invalid `layer_overrides`, non-integer `LayerConstraintOverride` values, and per-layer `target_experts` below `min_experts_per_layer`.",
-            "PM-requested strategy coverage is still incomplete in tests: the file exercises missing inputs and one partial-coverage case, but it does not add explicit regressions for duplicate `expert_stats` inputs or combined-strategy activation payload mismatches in `tests/test_prune_planner.py` (current coverage is around lines 196-206 and 347-476 only). Add those cases so the documented validation branches are protected."
-          ],
-          "session": 1,
-          "timestamp": "2026-04-17T10:52:04.282Z"
-        },
-        {
-          "approach": "Fixed all five requested planner/test issues in commit `06b652c` (`fix: harden prune planner constraint validation`).\n\n`src/moe_surgeon/prune/planner.py` now rejects non-integer constraint counts up front, rejects non-integer/invalid `layer_overrides` keys and non-`LayerConstraintOverride` values in",
-          "success": false,
-          "error": "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_",
-          "verifyConfidence": 96,
-          "issues": [
-            "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_experts=2)` and `LayerConstraintOverride(target_experts=3, max_experts=2)` both build plans successfully, so invalid target sizes are not rejected early and the emitted `PrunePlan.constraints` can contradict the actual survivor budget. Reject `target_experts` when it falls outside override-local `min_experts`/`max_experts` and the resolved layer bounds.",
-            "`tests/test_prune_planner.py:341-394` covers zero/invalid scalar payloads and `target_experts < min_experts_per_layer`, but it does not cover `target_experts < override.min_experts` or `target_experts > override.max_experts`. Add regressions for both cases and assert an explicit validation error so this acceptance gap cannot pass with a green suite again."
-          ],
-          "session": 2,
-          "timestamp": "2026-04-17T13:06:40.011Z"
-        },
-        {
-          "approach": "[Define strategy protocol and registry]: Fixed both requested issues in commit `3504db6` (`fix: address verify issues - exact target bounds`).\n\nIn [planner.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/prune/planner.py:41), `LayerConstraintOverride.__post_init__` now rejects contradictory ex",
-          "success": false,
-          "error": "PM verification criterion is unmet: the tree does not contain tracked `src/moe_surgeon/prune/strategy.py`; only `src/moe_surgeon/prune/strategies.py` exists (`ls src/moe_surgeon/prune`). Add the reque",
-          "verifyConfidence": 96,
-          "issues": [
-            "PM verification criterion is unmet: the tree does not contain tracked `src/moe_surgeon/prune/strategy.py`; only `src/moe_surgeon/prune/strategies.py` exists (`ls src/moe_surgeon/prune`). Add the requested module or a compatibility wrapper and wire it through `src/moe_surgeon/prune/__init__.py`.",
-            "`PrunePlan.constraints` can still disagree with the actual survivor bounds. `PlannerConstraints.plan_constraints()` copies raw user inputs (`src/moe_surgeon/prune/planner.py:135-152`), and `build_prune_plan()` stores that raw map in the emitted plan (`src/moe_surgeon/prune/planner.py:493-514`) even though `_layer_budgets()` resolves/clips bounds against topology (`src/moe_surgeon/prune/planner.py:241-299`). Reproduced locally: with two 3-expert layers and `max_experts_per_layer=10`, the plan serialized `{\"max_experts_per_layer\": 10}` while metadata reported `layer_0_maximum_keep=3` and `layer_1_maximum_keep=3`. The plan output should serialize resolved constraints or otherwise make `constraints` match the actual plan.",
-            "Test coverage misses the clipped-constraint regression. `tests/test_prune_planner.py:532-548` verifies byte-identical output and one unclipped override case, but there is no assertion that clipped global/per-layer limits are reflected consistently between `PrunePlan.constraints` and resolved budget metadata. Add a regression that fails on the reproduced `max_experts_per_layer=10` case before fixing the planner."
-          ],
-          "session": 3,
-          "timestamp": "2026-04-17T13:48:13.501Z"
-        }
-      ],
-      "stuckSince": null
-    },
     "4f689b41-8af8-4b2c-b841-b280ad3ca488": {
       "attempts": [
         {
@@ -131,6 +86,6 @@
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T15:38:58.100Z"
+    "lastUpdated": "2026-04-17T16:38:29.433Z"
   }
 }
