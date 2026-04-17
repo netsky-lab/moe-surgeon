@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/**/*.test.js",
+    "test": "python -m pytest",
     "lint": "python -m ruff check src tests"
   }
 }

@@ -48,6 +48,7 @@ def test_sort_experts_stable_for_equal_records() -> None:
 def test_json_round_trip_preserves_plan() -> None:
     plan = PrunePlan(
         model_signature="m",
+        model_handle=ModelHandle(model_id="abc"),
         per_layer_plans=(
             PrunePlanItem(
                 layer_index=0,
@@ -61,6 +62,26 @@ def test_json_round_trip_preserves_plan() -> None:
     restored = from_json(payload)
     assert restored == plan
     assert type(restored).__name__ == "PrunePlan"
+
+
+def test_json_round_trip_preserves_plan_model_handle() -> None:
+    plan = PrunePlan(
+        model_signature="m",
+        model_handle=ModelHandle(model_id="abc"),
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(0,),
+                drop_indices=(1,),
+                source_expert_count=2,
+            ),
+        ),
+    )
+
+    restored = from_json(to_json(plan))
+
+    assert restored == plan
+    assert isinstance(restored.model_handle, ModelHandle)
 
 
 def test_json_round_trip_preserves_manifest_with_nested_plan() -> None:
@@ -192,6 +213,25 @@ def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
     assert plan.per_layer_plans[0].keep_indices == (0, 1)
 
 
+def test_from_dict_coerces_prune_plan_model_handle_payload() -> None:
+    plan = PrunePlan.from_dict(
+        {
+            "model_signature": "m",
+            "model_handle": {"model_id": "abc"},
+            "per_layer_plans": [
+                {
+                    "layer_index": 0,
+                    "keep_indices": [0],
+                    "drop_indices": [1],
+                    "source_expert_count": 2,
+                }
+            ],
+        }
+    )
+    assert isinstance(plan.model_handle, ModelHandle)
+    assert plan.model_handle.model_id == "abc"
+
+
 def test_from_json_rejects_unknown_schema_type() -> None:
     with pytest.raises(SchemaValidationError, match="Unsupported __schema_type"):
         from_json('{"__schema_type":"UnknownSchema","value":1}')
@@ -252,4 +292,29 @@ def test_manifest_from_dict_rejects_invalid_model_handle_payload() -> None:
                 "command": "scan",
                 "model_handle": {"seed": 7},
             }
+        )
+
+
+def test_prune_plan_item_rejects_out_of_range_expert_indices() -> None:
+    with pytest.raises(
+        TopologyMismatchError,
+        match=r"keep_indices and drop_indices must cover contiguous expert indices 0\.\.1",
+    ):
+        PrunePlanItem(
+            layer_index=0,
+            keep_indices=(0, 99),
+            drop_indices=(),
+            source_expert_count=2,
+        )
+
+
+def test_prune_plan_item_rejects_non_covering_expert_indices() -> None:
+    with pytest.raises(
+        TopologyMismatchError,
+        match=r"keep_indices and drop_indices must cover contiguous expert indices 0\.\.1",
+    ):
+        PrunePlanItem(
+            layer_index=0,
+            keep_indices=(0, 2),
+            drop_indices=(),
         )

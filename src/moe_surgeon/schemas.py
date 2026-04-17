@@ -322,7 +322,7 @@ def _coerce_mapping_for_payload(payload: Mapping[str, Any], target: Type["_Schem
                 value = PrunePlan.from_dict(value)
             elif not isinstance(value, PrunePlan):
                 raise SchemaValidationError("run_plan must be a PrunePlan")
-        elif f.name == "model_handle" and target.__name__ == "RunArtifactManifest":
+        elif f.name == "model_handle" and target.__name__ in {"PrunePlan", "RunArtifactManifest"}:
             if value is None:
                 pass
             elif isinstance(value, Mapping):
@@ -734,6 +734,7 @@ class PrunePlanItem(_SchemaBase):
 
         inferred_source = len(keep) + len(drop)
         inferred_target = len(keep)
+        source_bound = inferred_source
 
         if self.source_expert_count is not None:
             source = _ensure_positive_int(self.source_expert_count, name="source_expert_count")
@@ -741,6 +742,7 @@ class PrunePlanItem(_SchemaBase):
                 raise TopologyMismatchError(
                     f"source_expert_count mismatch: expected {inferred_source}, got {source}"
                 )
+            source_bound = source
 
         if self.target_expert_count is not None:
             target = _ensure_non_negative_int(self.target_expert_count, name="target_expert_count")
@@ -755,6 +757,15 @@ class PrunePlanItem(_SchemaBase):
                 raise TopologyMismatchError(
                     f"expected_expert_count mismatch: expected {inferred_source}, got {expected}"
                 )
+            source_bound = expected
+
+        combined = tuple(sorted(keep + drop))
+        expected_indices = tuple(range(source_bound))
+        if combined != expected_indices:
+            raise TopologyMismatchError(
+                "keep_indices and drop_indices must cover contiguous expert indices "
+                f"0..{source_bound - 1}"
+            )
 
         if self.rationale is not None:
             _ensure_non_empty_str(self.rationale, name="rationale")
