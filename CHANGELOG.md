@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reproduced the authoritative supervisor collector path that previously
+  reported `2/2` for this repo, confirmed the root cause was a stale persisted
+  supervisor `verifyConfig` with `typeCheckCommand: null`, and added regression
+  coverage in `tests/test_repo_metrics.py` for both the repo-local `3/3`
+  fallback path and the stale persisted-config shadowing path.
 - Added `src/moe_surgeon/repo_metrics.py`, a lightweight repo-owned metrics
   collector that reads `.supervisor/project.json`, runs the configured checks
   as named `lint`, `typecheck`, and `tests` metrics, and writes a canonical

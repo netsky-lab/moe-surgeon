@@ -313,3 +313,131 @@ console.log(JSON.stringify(metrics));
     payload = json.loads(result.stdout)
     assert payload["summary"] == {"failed": 0, "passed": 3, "total": 3}
     assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "test_suite"]
+
+
+def test_actual_supervisor_collector_uses_repo_local_repo_metrics_fallback_shape(tmp_path: Path) -> None:
+    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+    if not collector_path.exists():
+        pytest.skip("supervisor collector dist build is not available")
+
+    project_root = tmp_path
+    supervisor_dir = project_root / ".supervisor"
+    supervisor_dir.mkdir(parents=True)
+    (supervisor_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "verifyConfig": {
+                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
+                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
+                    "buildCommand": None,
+                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
+                    "coverageCommand": None,
+                    "browserTestCommand": None,
+                },
+                "repoMetricsConfig": {
+                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
+                    "typeCheckCommand": f"{sys.executable} -c \"print('typecheck ok')\"",
+                    "buildCommand": None,
+                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
+                    "coverageCommand": None,
+                    "browserTestCommand": None,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    probe = f"""
+import {{ collectMetrics }} from {json.dumps(str(collector_path))};
+
+const metrics = await collectMetrics(
+  {{
+    rootPath: {json.dumps(str(project_root))},
+    verifyConfig: null
+  }},
+  "taskid",
+  "runid",
+);
+
+console.log(JSON.stringify(metrics));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["summary"] == {"failed": 0, "passed": 3, "total": 3}
+    assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "test_suite"]
+
+
+def test_actual_supervisor_collector_prefers_persisted_verify_config_over_repo_local_file(tmp_path: Path) -> None:
+    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+    if not collector_path.exists():
+        pytest.skip("supervisor collector dist build is not available")
+
+    project_root = tmp_path
+    persisted_lint_command = sys.executable + " -c \"print('lint via persisted state')\""
+    persisted_test_command = sys.executable + " -c \"print('tests via persisted state')\""
+    repo_lint_command = sys.executable + " -c \"print('lint via repo file')\""
+    repo_typecheck_command = sys.executable + " -c \"print('typecheck via repo file')\""
+    repo_test_command = sys.executable + " -c \"print('tests via repo file')\""
+    supervisor_dir = project_root / ".supervisor"
+    supervisor_dir.mkdir(parents=True)
+    (supervisor_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "verifyConfig": {
+                    "lintCommand": repo_lint_command,
+                    "typeCheckCommand": repo_typecheck_command,
+                    "buildCommand": None,
+                    "testCommand": repo_test_command,
+                    "coverageCommand": None,
+                    "browserTestCommand": None,
+                }
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    probe = f"""
+import {{ collectMetrics }} from {json.dumps(str(collector_path))};
+
+const metrics = await collectMetrics(
+  {{
+    rootPath: {json.dumps(str(project_root))},
+    verifyConfig: {{
+      lintCommand: {json.dumps(persisted_lint_command)},
+      typeCheckCommand: null,
+      buildCommand: null,
+      testCommand: {json.dumps(persisted_test_command)},
+      coverageCommand: null,
+      browserTestCommand: null
+    }}
+  }},
+  "taskid",
+  "runid",
+);
+
+console.log(JSON.stringify(metrics));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["summary"] == {"failed": 0, "passed": 2, "total": 2}
+    assert [check["name"] for check in payload["checks"]] == ["lint", "test_suite"]
