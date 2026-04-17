@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replaced the installed-supervisor collector regression with a repo-config
+  integration test in `tests/test_repo_metrics.py` that resolves this repo's
+  `.supervisor/project.json` through the live collector path and fails if the
+  resolved checks ever drop `typecheck`.
 - Replayed the supervisor task-metrics persistence path for task
   `97333f84-e4ed-4f1a-b3d5-0930408fa389` after the verify-config fix so the
   stored authoritative task record and `.supervisor/logs/task-97333f84.log`

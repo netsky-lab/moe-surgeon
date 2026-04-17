@@ -272,35 +272,23 @@ def test_repo_metrics_collector_single_check_fails_when_missing(tmp_path: Path) 
     assert "Requested check 'typecheck' is not configured" in result.stderr
 
 
-def test_actual_supervisor_collector_reports_three_checks_for_repo(tmp_path: Path) -> None:
+def test_actual_supervisor_collector_resolves_repo_config_with_typecheck() -> None:
     collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
     if not collector_path.exists():
         pytest.skip("supervisor collector dist build is not available")
 
-    project_root = tmp_path
-    lint_command = f"{sys.executable} -c \"print('lint ok')\""
-    typecheck_command = f"{sys.executable} -c \"print('typecheck ok')\""
-    test_command = f"{sys.executable} -c \"print('tests ok')\""
+    project_root = Path(__file__).resolve().parents[1]
     probe = f"""
-import {{ collectMetrics }} from {json.dumps(str(collector_path))};
+import {{ resolveVerifyConfig }} from {json.dumps(str(collector_path))};
 
-const metrics = await collectMetrics(
+const verifyConfig = resolveVerifyConfig(
   {{
     rootPath: {json.dumps(str(project_root))},
-    verifyConfig: {{
-      lintCommand: {json.dumps(lint_command)},
-      typeCheckCommand: {json.dumps(typecheck_command)},
-      buildCommand: null,
-      testCommand: {json.dumps(test_command)},
-      coverageCommand: null,
-      browserTestCommand: null
-    }}
-  }},
-  "taskid",
-  "runid",
+    verifyConfig: null,
+  }}
 );
 
-console.log(JSON.stringify(metrics));
+console.log(JSON.stringify(verifyConfig));
 """
     result = subprocess.run(
         ["node", "--input-type=module", "-e", probe],
@@ -311,8 +299,18 @@ console.log(JSON.stringify(metrics));
 
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout)
-    assert payload["summary"] == {"failed": 0, "passed": 3, "total": 3}
-    assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "test_suite"]
+    assert payload == _load_supervisor_verify_config()
+    assert payload["typeCheckCommand"] == "python -m moe_surgeon.repo_metrics --check typecheck"
+    resolved_checks = [
+        name
+        for name, command in (
+            ("lint", payload["lintCommand"]),
+            ("typecheck", payload["typeCheckCommand"]),
+            ("test_suite", payload["testCommand"]),
+        )
+        if command
+    ]
+    assert resolved_checks == ["lint", "typecheck", "test_suite"]
 
 
 def test_actual_supervisor_collector_uses_repo_local_repo_metrics_fallback_shape(tmp_path: Path) -> None:
