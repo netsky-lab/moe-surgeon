@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Restored the tracked local safetensors checkpoint reader in
+  `src/moe_surgeon/models/checkpoints.py` with deterministic config/index
+  parsing, single-file and sharded layout support, targeted tensor loads, and
+  explicit domain-error diagnostics for malformed indexes, unsafe shard paths,
+  missing shards, missing indexed keys, and missing requested tensors.
+- Added offline checkpoint-reader regression coverage in
+  `tests/test_models_checkpoints.py`, including deterministic `state_keys`
+  compatibility with the Gemma4 backend's topology-only `state_keys` path.
+- Audited the task ledger so P6 completion now points at the delivered runtime
+  profiler implementation in `src/moe_surgeon/runtime/profiler.py`,
+  `src/moe_surgeon/runtime/bench.py`, `src/moe_surgeon/runtime/__init__.py`,
+  and `tests/test_runtime_profiler.py`, while the `repo_metrics` single-check
+  dispatcher fix is recorded as verification/hardening work rather than the
+  profiler delivery itself.
 - Moved the live Gemma4 router-contract coverage in
   `tests/test_runtime_profiler.py` behind a registered `integration` marker,
   updated `pyproject.toml` so plain `python -m pytest` deselects integration
