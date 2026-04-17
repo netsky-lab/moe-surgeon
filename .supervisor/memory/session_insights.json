@@ -102,5 +102,13 @@
       "enforce-a-truthful-transformers-support-floor-for-gemma4"
     ],
     "timestamp": "2026-04-17T13:35:42.368Z"
+  },
+  {
+    "taskTitle": "Stabilize repo test execution against ambient pytest plugins and tempdir failures",
+    "summary": "Implemented in commit `db49b6e` (`fix: isolate pytest runs from ambient plugins`).\n\n`python -m pytest` is now repo-configured to run with `--disable-plugin-autoload` and `--basetemp=.tmp/pytest` via [pyproject.toml](/home/netsky/dev/labs/moe-surgeon/pyproject.toml). I added [src/moe_surgeon/test_env",
+    "tags": [
+      "stabilize-repo-test-execution-against-ambient-pytest-plugins-and-tempdir-failures"
+    ],
+    "timestamp": "2026-04-17T14:06:06.648Z"
   }
 ]
