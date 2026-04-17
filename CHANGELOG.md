@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Tightened `models/backend.py` and `models/registry.py` so backend resolution
+  accepts either lightweight config mappings or explicit signatures while
+  preserving deterministic priority/name ordering and explicit compatibility
+  failures.
+- Expanded `models/errors.py` diagnostic helpers so model, layer, tensor, and
+  shape context is normalized through one shared domain-error path.
+- Added focused backend-registry tests for plain-config resolution, invalid
+  compatibility responses, and priority validation.
 - Added lightweight backend contracts in `src/moe_surgeon/models/backend.py`
   with `BackendSignature`, `LoadedBackendBundle`, `TensorMetadata`, and the
   `ModelBackend` protocol aligned to shared schema dataclasses.

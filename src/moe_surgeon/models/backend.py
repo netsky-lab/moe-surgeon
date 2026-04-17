@@ -56,6 +56,22 @@ class BackendSignature:
         )
 
 
+BackendSignatureInput = BackendSignature | Mapping[str, object]
+
+
+def coerce_backend_signature(
+    signature: BackendSignatureInput,
+    *,
+    model_id: str | None = None,
+    source_path: str | Path | None = None,
+) -> BackendSignature:
+    """Normalize a resolver input into a lightweight backend signature."""
+
+    if isinstance(signature, BackendSignature):
+        return signature
+    return BackendSignature.from_mapping(signature, model_id=model_id, source_path=source_path)
+
+
 @dataclass(frozen=True)
 class TensorMetadata:
     """Minimal tensor descriptor returned by backend state accessors."""
@@ -136,7 +152,9 @@ from moe_surgeon.models.registry import BackendRegistry  # noqa: E402
 
 __all__ = [
     "BackendRegistry",
+    "BackendSignatureInput",
     "BackendSignature",
+    "coerce_backend_signature",
     "LoadedBackendBundle",
     "ModelBackend",
     "TensorMetadata",

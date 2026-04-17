@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
-from moe_surgeon.models.backend import BackendRegistry, BackendSignature, LoadedBackendBundle, TensorMetadata
+from moe_surgeon.models.backend import (
+    BackendRegistry,
+    BackendSignature,
+    LoadedBackendBundle,
+    TensorMetadata,
+    coerce_backend_signature,
+)
 from moe_surgeon.models.errors import (
     BackendMismatchError,
     ShapeInvariantViolationError,
@@ -77,6 +84,12 @@ class StubBackend:
     def validate_bundle(self, bundle: LoadedBackendBundle) -> None:
         return None
 
+
+@dataclass
+class InvalidSupportsBackend(StubBackend):
+    def supports(self, signature: BackendSignature) -> bool:  # type: ignore[override]
+        return "yes"  # type: ignore[return-value]
+
     def validate_layer(
         self,
         bundle: LoadedBackendBundle,
@@ -103,6 +116,19 @@ def test_backend_signature_from_mapping_uses_lightweight_config_fields() -> None
     assert signature.revision == "abc123"
 
 
+def test_coerce_backend_signature_accepts_plain_config_mappings() -> None:
+    signature = coerce_backend_signature(
+        {"architectures": ["Gemma4ForConditionalGeneration"], "model_type": "gemma4"},
+        model_id="google/gemma",
+        source_path=Path("/tmp/checkpoint"),
+    )
+
+    assert signature.model_id == "google/gemma"
+    assert signature.architecture == "Gemma4ForConditionalGeneration"
+    assert signature.model_type == "gemma4"
+    assert signature.source_path == "/tmp/checkpoint"
+
+
 def test_registry_resolves_single_backend_deterministically() -> None:
     registry = BackendRegistry()
     fallback = StubBackend(name="fallback", supported_model_type="gemma4")
@@ -116,12 +142,33 @@ def test_registry_resolves_single_backend_deterministically() -> None:
     assert registry.names() == ("preferred", "fallback")
 
 
+def test_registry_resolves_from_plain_config_mapping() -> None:
+    registry = BackendRegistry()
+    backend = StubBackend(name="gemma4", supported_model_type="gemma4")
+    registry.register(backend, priority=5)
+
+    resolved = registry.resolve(
+        {"architectures": ["Gemma4ForConditionalGeneration"], "model_type": "gemma4"},
+        model_id="google/gemma-4",
+        source_path="/models/gemma-4",
+    )
+
+    assert resolved is backend
+
+
 def test_registry_rejects_duplicate_backend_names() -> None:
     registry = BackendRegistry()
     registry.register(StubBackend(name="gemma4", supported_model_type="gemma4"))
 
     with pytest.raises(BackendMismatchError, match="duplicate backend registration"):
         registry.register(StubBackend(name="gemma4", supported_model_type="gemma4"))
+
+
+def test_registry_rejects_non_integer_priority() -> None:
+    registry = BackendRegistry()
+
+    with pytest.raises(BackendMismatchError, match="backend priority must be int"):
+        registry.register(StubBackend(name="gemma4", supported_model_type="gemma4"), priority=True)
 
 
 def test_registry_raises_unsupported_model_with_context() -> None:
@@ -146,6 +193,16 @@ def test_registry_raises_ambiguous_resolution_for_same_priority_matches() -> Non
         registry.resolve(BackendSignature(model_id="model", model_type="gemma4"))
 
     assert "candidate_backends=alpha,beta" in str(exc_info.value)
+
+
+def test_registry_raises_when_backend_supports_contract_is_invalid() -> None:
+    registry = BackendRegistry()
+    registry.register(InvalidSupportsBackend(name="broken", supported_model_type="gemma4"))
+
+    with pytest.raises(BackendMismatchError, match="backend supports\\(\\) must return bool") as exc_info:
+        registry.resolve(BackendSignature(model_id="model", model_type="gemma4"))
+
+    assert "backend=broken" in str(exc_info.value)
 
 
 def test_backend_protocol_contract_returns_schema_types() -> None:

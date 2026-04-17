@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable
 
-from moe_surgeon.models.backend import BackendSignature, ModelBackend
+from moe_surgeon.models.backend import (
+    BackendSignatureInput,
+    ModelBackend,
+    coerce_backend_signature,
+)
 from moe_surgeon.models.errors import BackendMismatchError, UnsupportedModelError
 
 
@@ -33,30 +38,43 @@ class BackendRegistry:
         name = getattr(backend, "name", None)
         if not isinstance(name, str) or not name.strip():
             raise BackendMismatchError("backend name must be a non-empty string")
+        if isinstance(priority, bool) or not isinstance(priority, int):
+            raise BackendMismatchError(
+                "backend priority must be int",
+                backend_name=name,
+                details={"priority": priority},
+            )
         if name in self._entries:
             raise BackendMismatchError(
                 "duplicate backend registration",
                 backend_name=name,
                 details={"existing_priority": self._entries[name].priority, "new_priority": priority},
             )
-        self._entries[name] = RegisteredBackend(name=name, backend=backend, priority=int(priority))
+        self._entries[name] = RegisteredBackend(name=name, backend=backend, priority=priority)
 
     def names(self) -> tuple[str, ...]:
         """Return registered backend names in deterministic resolver order."""
 
         return tuple(entry.name for entry in self._sorted_entries())
 
-    def resolve(self, signature: BackendSignature) -> ModelBackend:
+    def resolve(
+        self,
+        signature: BackendSignatureInput,
+        *,
+        model_id: str | None = None,
+        source_path: str | Path | None = None,
+    ) -> ModelBackend:
         """Resolve exactly one backend for the provided signature."""
 
-        matches = self.matching_entries(signature)
+        normalized = coerce_backend_signature(signature, model_id=model_id, source_path=source_path)
+        matches = self.matching_entries(normalized)
         if not matches:
             raise UnsupportedModelError(
-                signature.model_id,
+                normalized.model_id,
                 available_backends=self.names(),
                 details={
-                    "architecture": signature.architecture or "unknown",
-                    "model_type": signature.model_type or "unknown",
+                    "architecture": normalized.architecture or "unknown",
+                    "model_type": normalized.model_type or "unknown",
                 },
             )
 
@@ -65,7 +83,7 @@ class BackendRegistry:
         if len(top_matches) > 1:
             raise BackendMismatchError(
                 "ambiguous backend resolution",
-                model_id=signature.model_id,
+                model_id=normalized.model_id,
                 details={
                     "candidate_backends": ",".join(entry.name for entry in top_matches),
                     "priority": winning_priority,
@@ -73,16 +91,23 @@ class BackendRegistry:
             )
         return top_matches[0].backend
 
-    def matching_entries(self, signature: BackendSignature) -> tuple[RegisteredBackend, ...]:
+    def matching_entries(
+        self,
+        signature: BackendSignatureInput,
+        *,
+        model_id: str | None = None,
+        source_path: str | Path | None = None,
+    ) -> tuple[RegisteredBackend, ...]:
         """Return matching backends sorted by deterministic selection rules."""
 
+        normalized = coerce_backend_signature(signature, model_id=model_id, source_path=source_path)
         matches: list[RegisteredBackend] = []
         for entry in self._sorted_entries():
-            supported = entry.backend.supports(signature)
+            supported = entry.backend.supports(normalized)
             if not isinstance(supported, bool):
                 raise BackendMismatchError(
                     "backend supports() must return bool",
-                    model_id=signature.model_id,
+                    model_id=normalized.model_id,
                     backend_name=entry.name,
                 )
             if supported:

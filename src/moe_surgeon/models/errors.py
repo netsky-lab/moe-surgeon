@@ -7,7 +7,7 @@ protocols and registries does not pull runtime-heavy ML dependencies.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Sequence
 
 ShapeLike = tuple[int, ...] | list[int] | None
 
@@ -26,6 +26,12 @@ def _with_legacy_details(
     for index, value in enumerate(legacy_args, start=1):
         merged[f"legacy_arg_{index}"] = value
     return merged
+
+
+def _normalize_shape(shape: Sequence[int] | None) -> tuple[int, ...] | None:
+    if shape is None:
+        return None
+    return tuple(int(dimension) for dimension in shape)
 
 
 @dataclass(frozen=True)
@@ -70,6 +76,29 @@ def format_diagnostic_message(message: str, *, context: DiagnosticContext | None
     return f"{message} ({description})"
 
 
+def build_diagnostic_context(
+    *,
+    model_id: str | None = None,
+    backend_name: str | None = None,
+    layer_index: int | None = None,
+    tensor_key: str | None = None,
+    expected_shape: Sequence[int] | None = None,
+    actual_shape: Sequence[int] | None = None,
+    details: Mapping[str, object] | None = None,
+) -> DiagnosticContext:
+    """Create normalized diagnostic context for model-domain errors."""
+
+    return DiagnosticContext(
+        model_id=model_id,
+        backend_name=backend_name,
+        layer_index=layer_index,
+        tensor_key=tensor_key,
+        expected_shape=_normalize_shape(expected_shape),
+        actual_shape=_normalize_shape(actual_shape),
+        details={} if details is None else dict(details),
+    )
+
+
 class ModelError(ValueError):
     """Base class for model/backend domain errors."""
 
@@ -94,7 +123,7 @@ class UnsupportedModelError(ModelError):
     ) -> None:
         super().__init__(
             "unsupported model family",
-            context=DiagnosticContext(
+            context=build_diagnostic_context(
                 model_id=model_id,
                 details={
                     "available_backends": ",".join(available_backends) if available_backends else "none",
@@ -117,7 +146,7 @@ class BackendMismatchError(ModelError):
     ) -> None:
         super().__init__(
             message,
-            context=DiagnosticContext(
+            context=build_diagnostic_context(
                 model_id=model_id,
                 backend_name=backend_name,
                 details={} if details is None else dict(details),
@@ -141,7 +170,7 @@ class TopologyMismatchError(SchemaValidationError):
     ) -> None:
         super().__init__(
             message,
-            context=DiagnosticContext(
+            context=build_diagnostic_context(
                 model_id=model_id,
                 layer_index=layer_index,
                 tensor_key=tensor_key,
@@ -168,7 +197,7 @@ class ShapeInvariantViolationError(SchemaValidationError):
     ) -> None:
         super().__init__(
             message,
-            context=DiagnosticContext(
+            context=build_diagnostic_context(
                 model_id=model_id,
                 layer_index=layer_index,
                 tensor_key=tensor_key,
@@ -187,5 +216,6 @@ __all__ = [
     "ShapeInvariantViolationError",
     "TopologyMismatchError",
     "UnsupportedModelError",
+    "build_diagnostic_context",
     "format_diagnostic_message",
 ]
