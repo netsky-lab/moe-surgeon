@@ -1,0 +1,10 @@
+{
+  "name": "moe-surgeon",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/**/*.test.js",
+    "lint": "echo ok"
+  }
+}
