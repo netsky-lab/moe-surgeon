@@ -19,6 +19,8 @@
   explicit unsupported-Transformers runtime guard for local `transformers 4.51.3`.
 - Implemented explicit Gemma 4 MoE layer traversal in `src/moe_surgeon/models/gemma4.py`, including deterministic ordered MoE layer enumeration, config-vs-state tensor-key discovery, and fail-fast diagnostics for unexpected or incomplete MoE layer key sets.
 - Expanded `tests/test_models_gemma4.py` with offline regression coverage for ordered MoE key traversal, non-MoE layer rejection, and unexpected layer-prefix mismatch handling.
+- Hardened `src/moe_surgeon/models/gemma4.py` to require Gemma4 hybrid decoder-layer companion tensors (`mlp.*` and feedforward norms) alongside router/expert tensors during topology validation and to enforce exact expert tensor layouts from `moe_intermediate_size`.
+- Extended `tests/test_models_gemma4.py` so synthetic Gemma4 layers model the published hybrid topology and regressions cover missing dense hybrid keys, wrong `moe_intermediate_size`, and invalid expert tensor rank failures.
 
 ## 2026-04-17
 - Registered the Gemma4 backend through a canonical default-registry entry in

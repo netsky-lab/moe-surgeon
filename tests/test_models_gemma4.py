@@ -52,6 +52,14 @@ def _layer_state(layer_index: int) -> dict[str, FakeTensor]:
         f"{prefix}.router.per_expert_scale": FakeTensor((128,)),
         f"{prefix}.experts.gate_up_proj": FakeTensor((128, 1408, 2816)),
         f"{prefix}.experts.down_proj": FakeTensor((128, 2816, 704)),
+        f"{prefix}.mlp.down_proj.weight": FakeTensor((2816, 2112)),
+        f"{prefix}.mlp.gate_proj.weight": FakeTensor((2112, 2816)),
+        f"{prefix}.mlp.up_proj.weight": FakeTensor((2112, 2816)),
+        f"{prefix}.pre_feedforward_layernorm.weight": FakeTensor((2816,)),
+        f"{prefix}.pre_feedforward_layernorm_2.weight": FakeTensor((2816,)),
+        f"{prefix}.post_feedforward_layernorm.weight": FakeTensor((2816,)),
+        f"{prefix}.post_feedforward_layernorm_1.weight": FakeTensor((2816,)),
+        f"{prefix}.post_feedforward_layernorm_2.weight": FakeTensor((2816,)),
     }
 
 
@@ -141,10 +149,23 @@ def test_gemma4_backend_missing_required_tensor_key_raises_topology_mismatch() -
     del state_dict["model.language_model.layers.0.router.per_expert_scale"]
     bundle = _bundle(config=config, state_dict=state_dict)
 
-    with pytest.raises(TopologyMismatchError, match="missing Gemma4 MoE tensor keys") as exc_info:
+    with pytest.raises(TopologyMismatchError, match="missing Gemma4 hybrid layer tensor keys") as exc_info:
         backend.extract_topology(bundle)
 
     assert "router.per_expert_scale" in str(exc_info.value)
+
+
+def test_gemma4_backend_validate_bundle_rejects_missing_dense_hybrid_keys() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    del state_dict["model.language_model.layers.0.mlp.down_proj.weight"]
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(TopologyMismatchError, match="missing Gemma4 hybrid layer tensor keys") as exc_info:
+        backend.validate_bundle(bundle)
+
+    assert "mlp.down_proj.weight" in str(exc_info.value)
 
 
 def test_gemma4_backend_detects_unexpected_moe_layer_tensor_prefixes() -> None:
@@ -198,10 +219,45 @@ def test_gemma4_backend_expert_shape_mismatch_raises_shape_invariant_error() -> 
     bundle = _bundle(config=config, state_dict=state_dict)
     layer = backend.extract_topology(bundle)[0]
 
-    with pytest.raises(ShapeInvariantViolationError, match="expert axis mismatch") as exc_info:
+    with pytest.raises(ShapeInvariantViolationError, match="experts.down_proj shape mismatch") as exc_info:
         backend.extract_expert_state(bundle, layer=layer)
 
-    assert "expected_shape=128" in str(exc_info.value)
+    assert "expected_shape=128x2816x704" in str(exc_info.value)
+    assert "actual_shape=127x2816x704" in str(exc_info.value)
+
+
+def test_gemma4_backend_rejects_wrong_moe_intermediate_size() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    state_dict["model.language_model.layers.0.experts.gate_up_proj"] = FakeTensor((128, 1998, 2816))
+    state_dict["model.language_model.layers.0.experts.down_proj"] = FakeTensor((128, 2816, 999))
+    bundle = _bundle(config=config, state_dict=state_dict)
+    layer = backend.extract_topology(bundle)[0]
+
+    with pytest.raises(ShapeInvariantViolationError, match="experts.gate_up_proj shape mismatch") as exc_info:
+        backend.extract_expert_state(bundle, layer=layer)
+
+    message = str(exc_info.value)
+    assert "expected_shape=128x1408x2816" in message
+    assert "actual_shape=128x1998x2816" in message
+    assert "expected_layout=(num_experts, 2 * moe_intermediate_size, hidden_size)" in message
+
+
+def test_gemma4_backend_rejects_unexpected_expert_tensor_rank() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    state_dict["model.language_model.layers.0.experts.down_proj"] = FakeTensor((128, 2816))
+    bundle = _bundle(config=config, state_dict=state_dict)
+    layer = backend.extract_topology(bundle)[0]
+
+    with pytest.raises(ShapeInvariantViolationError, match="experts.down_proj rank must be 3") as exc_info:
+        backend.extract_expert_state(bundle, layer=layer)
+
+    message = str(exc_info.value)
+    assert "expected_shape=128x2816x704" in message
+    assert "actual_shape=128x2816" in message
 
 
 def test_gemma4_backend_load_populates_model_handle_metadata_with_monkeypatched_runtime(

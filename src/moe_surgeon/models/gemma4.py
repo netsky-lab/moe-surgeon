@@ -32,6 +32,14 @@ _REQUIRED_LAYER_KEYS = {
     "router_per_expert_scale": "router.per_expert_scale",
     "experts_gate_up_proj": "experts.gate_up_proj",
     "experts_down_proj": "experts.down_proj",
+    "mlp_down_proj": "mlp.down_proj.weight",
+    "mlp_gate_proj": "mlp.gate_proj.weight",
+    "mlp_up_proj": "mlp.up_proj.weight",
+    "pre_feedforward_layernorm": "pre_feedforward_layernorm.weight",
+    "pre_feedforward_layernorm_2": "pre_feedforward_layernorm_2.weight",
+    "post_feedforward_layernorm": "post_feedforward_layernorm.weight",
+    "post_feedforward_layernorm_1": "post_feedforward_layernorm_1.weight",
+    "post_feedforward_layernorm_2": "post_feedforward_layernorm_2.weight",
 }
 
 
@@ -241,7 +249,7 @@ class Gemma4Backend:
         missing = [tensor_key for tensor_key in resolved.values() if tensor_key not in available]
         if missing:
             raise TopologyMismatchError(
-                "missing Gemma4 MoE tensor keys",
+                "missing Gemma4 hybrid layer tensor keys",
                 model_id=bundle.model_handle.model_id,
                 layer_index=layer_index,
                 details={
@@ -319,16 +327,20 @@ class Gemma4Backend:
             bundle=bundle,
             layer=layer,
             expected_experts=topology.num_experts,
+            expected_moe_intermediate_size=topology.moe_intermediate_size,
             expected_hidden_size=topology.hidden_size,
             tensor_key=tensor_keys["experts_gate_up_proj"],
+            tensor_name="experts.gate_up_proj",
         )
         self._validate_expert_tensor(
             down_shape,
             bundle=bundle,
             layer=layer,
             expected_experts=topology.num_experts,
+            expected_moe_intermediate_size=topology.moe_intermediate_size,
             expected_hidden_size=topology.hidden_size,
             tensor_key=tensor_keys["experts_down_proj"],
+            tensor_name="experts.down_proj",
         )
 
         return {
@@ -795,34 +807,66 @@ class Gemma4Backend:
         bundle: LoadedBackendBundle,
         layer: LayerTopology,
         expected_experts: int,
+        expected_moe_intermediate_size: int | None,
         expected_hidden_size: int,
         tensor_key: str,
+        tensor_name: str,
     ) -> None:
-        if len(shape) < 2:
-            raise ShapeInvariantViolationError(
-                "Gemma4 expert tensor rank must be >= 2",
+        if expected_moe_intermediate_size is None:
+            raise TopologyMismatchError(
+                "Gemma4 config must include moe_intermediate_size for expert validation",
                 model_id=bundle.model_handle.model_id,
                 layer_index=layer.layer_index,
                 tensor_key=tensor_key,
+            )
+        expected_shape = self._expected_expert_shape(
+            tensor_name=tensor_name,
+            expected_experts=expected_experts,
+            expected_hidden_size=expected_hidden_size,
+            expected_moe_intermediate_size=expected_moe_intermediate_size,
+        )
+        if len(shape) != 3:
+            raise ShapeInvariantViolationError(
+                f"Gemma4 {tensor_name} rank must be 3",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                tensor_key=tensor_key,
+                expected_shape=expected_shape,
                 actual_shape=shape,
+                details={"expected_layout": self._expected_expert_layout(tensor_name=tensor_name)},
             )
-        if shape[0] != expected_experts:
+        if shape != expected_shape:
             raise ShapeInvariantViolationError(
-                "Gemma4 expert tensor expert axis mismatch",
+                f"Gemma4 {tensor_name} shape mismatch",
                 model_id=bundle.model_handle.model_id,
                 layer_index=layer.layer_index,
                 tensor_key=tensor_key,
-                expected_shape=(expected_experts,),
-                actual_shape=(shape[0],),
+                expected_shape=expected_shape,
+                actual_shape=shape,
+                details={"expected_layout": self._expected_expert_layout(tensor_name=tensor_name)},
             )
-        if expected_hidden_size not in shape[1:]:
-            raise ShapeInvariantViolationError(
-                "Gemma4 expert tensor must include hidden_size on a non-expert axis",
-                model_id=bundle.model_handle.model_id,
-                layer_index=layer.layer_index,
-                tensor_key=tensor_key,
-                details={"hidden_size": expected_hidden_size, "actual_shape": "x".join(map(str, shape))},
-            )
+
+    def _expected_expert_shape(
+        self,
+        *,
+        tensor_name: str,
+        expected_experts: int,
+        expected_hidden_size: int,
+        expected_moe_intermediate_size: int,
+    ) -> tuple[int, int, int]:
+        if tensor_name == "experts.gate_up_proj":
+            return (expected_experts, expected_moe_intermediate_size * 2, expected_hidden_size)
+        if tensor_name == "experts.down_proj":
+            return (expected_experts, expected_hidden_size, expected_moe_intermediate_size)
+        raise ValueError(f"unsupported expert tensor name: {tensor_name}")
+
+    def _expected_expert_layout(self, *, tensor_name: str) -> str:
+        if tensor_name == "experts.gate_up_proj":
+            return "(num_experts, 2 * moe_intermediate_size, hidden_size)"
+        if tensor_name == "experts.down_proj":
+            return "(num_experts, hidden_size, moe_intermediate_size)"
+        raise ValueError(f"unsupported expert tensor name: {tensor_name}")
+
 
 def default_registry_entry() -> tuple[Gemma4Backend, int]:
     """Return the canonical default-registry registration for Gemma 4."""
