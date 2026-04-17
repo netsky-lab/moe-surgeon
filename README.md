@@ -96,4 +96,6 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Run `npm run lint` for the Ruff gate defined in `AGENTS.md`.
 - Run `npm run typecheck` for the `python -m mypy src` gate.
 - Run `npm test` for the `python -m pytest` suite.
-- Run `npm run metrics` to execute the full automated repo metrics set: lint, typecheck, then tests.
+- Supervisor automation reads `.supervisor/project.json` and enforces three checks:
+  `npm run lint`, `npm run typecheck`, and `npm test`.
+- Run `npm run metrics` locally to execute the same three quality gates in one command.

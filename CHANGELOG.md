@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-- Added a root `typecheck` script in `package.json` for the canonical
-  `python -m mypy src` quality gate and a `metrics` aggregate script so repo
-  automation now covers lint, type checking, and tests instead of only two
-  metrics.
-- Added `tests/test_repo_metrics.py` to lock the automated script wiring to the
-  `AGENTS.md` quality contract and updated `README.md` with the repo-level
-  quality commands.
+- Added `.supervisor/project.json` so the supervisor metric collector now runs
+  `npm run lint`, `npm run typecheck`, and `npm test`, bringing automated repo
+  metrics in line with the `AGENTS.md` type-check gate.
+- Kept the root `typecheck` and aggregate `metrics` scripts in `package.json`,
+  then strengthened `tests/test_repo_metrics.py` to validate the real
+  supervisor verify config and execute the configured `typecheck` command.
+- Updated `README.md` to document the supervisor-enforced quality commands
+  rather than claiming coverage from package scripts alone.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented

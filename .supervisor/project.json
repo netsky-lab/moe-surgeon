@@ -1,0 +1,10 @@
+{
+  "verifyConfig": {
+    "lintCommand": "npm run lint",
+    "typeCheckCommand": "npm run typecheck",
+    "buildCommand": null,
+    "testCommand": "npm test",
+    "coverageCommand": null,
+    "browserTestCommand": null
+  }
+}
