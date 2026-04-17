@@ -15,6 +15,7 @@ from math import floor, isfinite
 from pathlib import Path
 from typing import (
     Any,
+    cast,
     Dict,
     Iterable,
     Mapping,
@@ -25,12 +26,15 @@ from typing import (
     Type,
     TypeVar,
     Union,
+    get_args,
+    get_origin,
     get_type_hints,
 )
 import json
 import re
 
 CANONICAL_SCHEMA_VERSION = "1.0.0"
+CANONICAL_DEFAULT_TIMESTAMP = "1970-01-01T00:00:00+00:00"
 CANONICAL_FLOAT_EPSILON = 1e-12
 _LAYER_REF_PATTERNS = (re.compile(r"^layer_(\d+)$"), re.compile(r"^module_(\d+)$"))
 
@@ -55,7 +59,7 @@ SchemaKey = Union[str, int, float, bool, None]
 ShapeTuple = Tuple[int, ...]
 
 
-_SchemaType = TypeVar("SchemaType", bound="_SchemaBase")
+_SchemaType = TypeVar("_SchemaType", bound="_SchemaBase")
 
 
 def _utcnow_iso() -> str:
@@ -75,14 +79,14 @@ def _ensure_non_negative_int(value: Any, *, name: str) -> int:
         raise SchemaValidationError(f"{name} must be int")
     if value < 0:
         raise SchemaValidationError(f"{name} must be >= 0")
-    return value
+    return cast(int, value)
 
 
 def _ensure_positive_int(value: Any, *, name: str) -> int:
-    value = _ensure_non_negative_int(value, name=name)
-    if value <= 0:
+    value_i = _ensure_non_negative_int(value, name=name)
+    if value_i <= 0:
         raise SchemaValidationError(f"{name} must be > 0")
-    return value
+    return value_i
 
 
 def _ensure_float(value: Any, *, name: str) -> float:
@@ -235,10 +239,10 @@ def _expert_sort_tuple(
 
 
 def _as_schema_data(value: Any) -> Any:
-    if is_dataclass(value) and hasattr(value, "to_dict"):
-        return value.to_dict()  # type: ignore[union-attr]
+    if isinstance(value, _SchemaBase):
+        return value.to_dict()
     if is_dataclass(value):
-        return asdict(value)
+        return asdict(cast(Any, value))
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, set):
@@ -255,6 +259,27 @@ def _as_schema_data(value: Any) -> Any:
 def _coerce_mapping_for_payload(payload: Mapping[str, Any], target: Type["_SchemaBase"]) -> Dict[str, Any]:
     hints = get_type_hints(target)
     kwargs: Dict[str, Any] = {}
+
+    def _is_tuple_of(inner: object, annotation: Any) -> bool:
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        return (
+            origin in (tuple, Tuple)
+            and len(args) == 2
+            and args[0] is inner
+            and args[1] is Ellipsis
+        )
+
+    def _is_optional_tuple_of(inner: object, annotation: Any) -> bool:
+        args = get_args(annotation)
+        if len(args) != 2:
+            return False
+        if args[0] is type(None):
+            return _is_tuple_of(inner, args[1])
+        if args[1] is type(None):
+            return _is_tuple_of(inner, args[0])
+        return False
+
     for f in fields(target):
         if f.name.startswith("_"):
             continue
@@ -268,15 +293,17 @@ def _coerce_mapping_for_payload(payload: Mapping[str, Any], target: Type["_Schem
             raise SchemaValidationError(f"Missing required field '{f.name}' for {target.__name__}")
 
         annotation = hints.get(f.name)
-        if annotation is tuple[int, ...]:
+        if annotation is None:
+            raise SchemaValidationError(f"Missing type annotation for '{f.name}' in {target.__name__}")
+        if _is_tuple_of(int, annotation):
             if value is not None:
                 value = _canonicalize_int_tuple(value, name=f.name)
             else:
                 value = ()
-        elif annotation is Optional[Tuple[int, ...]]:
+        elif _is_optional_tuple_of(int, annotation):
             if value is not None:
                 value = _ensure_shape_tuple(value, name=f.name, allow_empty=True)
-        elif annotation is Tuple[str, ...]:
+        elif _is_tuple_of(str, annotation):
             value = _canonicalize_str_tuple(value, name=f.name) if value is not None else ()
         elif f.name == "per_layer_plans" and target.__name__ == "PrunePlan":
             converted: list[PrunePlanItem] = []
@@ -332,7 +359,7 @@ class _SchemaBase:
     @classmethod
     def from_dict(cls: Type[_SchemaType], payload: Mapping[str, Any]) -> _SchemaType:
         kwargs = _coerce_mapping_for_payload(payload, cls)
-        return cls(**kwargs)  # type: ignore[arg-type]
+        return cls(**kwargs)
 
 
 @dataclass
@@ -351,7 +378,7 @@ class ModelHandle(_SchemaBase):
     device: str = "cpu"
     dtype: Optional[str] = None
     seed: int = 0
-    created_at: str = field(default_factory=_utcnow_iso)
+    created_at: str = CANONICAL_DEFAULT_TIMESTAMP
     git_hash: Optional[str] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
     _schema_type: str = field(init=False, default="ModelHandle", repr=False)
@@ -466,7 +493,12 @@ class RouterState(_SchemaBase):
         if self.top_k > self.num_experts:
             raise TopologyMismatchError("top_k cannot exceed num_experts")
 
-        self.logits_shape = _ensure_shape_tuple(self.logits_shape, name="logits_shape", allow_empty=False)
+        validated_logits_shape = _ensure_shape_tuple(
+            self.logits_shape, name="logits_shape", allow_empty=False
+        )
+        if validated_logits_shape is None:
+            raise ShapeInvariantViolationError("logits_shape is required")
+        self.logits_shape = validated_logits_shape
         self.top_k_indices_shape = _ensure_shape_tuple(
             self.top_k_indices_shape,
             name="top_k_indices_shape",
@@ -763,7 +795,7 @@ class PrunePlan(_SchemaBase):
     global_target_experts: Optional[int] = None
     model_handle: Optional[ModelHandle] = None
     created_by: str = "system"
-    created_at: str = field(default_factory=_utcnow_iso)
+    created_at: str = CANONICAL_DEFAULT_TIMESTAMP
     source_run_id: Optional[str] = None
     constraints: Dict[str, SchemaKey] = field(default_factory=dict)
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
@@ -825,7 +857,7 @@ class RunArtifactManifest(_SchemaBase):
     prompt_count: int = 0
     seed: int = 0
     prompt_set_hash: Optional[str] = None
-    started_at: str = field(default_factory=_utcnow_iso)
+    started_at: str = CANONICAL_DEFAULT_TIMESTAMP
     finished_at: Optional[str] = None
     input_checksums: Dict[str, str] = field(default_factory=dict)
     output_paths: Dict[str, str] = field(default_factory=dict)
@@ -876,13 +908,13 @@ def sort_experts(
             PruneCandidate,
             ExpertStats,
             Tuple[int, float, float, int],
-            Tuple[int, int, float, float, int],
+            Tuple[int, float, float, int, int],
         ]
     ],
     *,
     score_epsilon: float = CANONICAL_FLOAT_EPSILON,
     secondary_epsilon: float = CANONICAL_FLOAT_EPSILON,
-) -> list[Union[PruneCandidate, ExpertStats, Tuple[int, float, float, int], Tuple[int, int, float, float, int]]]:
+) -> list[Union[PruneCandidate, ExpertStats, Tuple[int, float, float, int], Tuple[int, float, float, int, int]]]:
     """Stable expert ordering with explicit tie-breaks.
 
     Primary key: ``-score`` (epsilon-safe), ``-secondary``, ``layer_index``,
@@ -902,18 +934,27 @@ def sort_experts(
             raise SchemaValidationError(f"Unsupported expert record type: {type(item).__name__}")
 
         if len(item) == 4:
-            layer_index, score, secondary, expert_index = item
+            raw_layer_index = item[0]
+            raw_score = item[1]
+            raw_secondary = item[2]
+            raw_expert_index = item[3]
         elif len(item) == 5:
-            layer_index, score, secondary, expert_index, _position = item
+            raw_layer_index = item[0]
+            raw_score = item[1]
+            raw_secondary = item[2]
+            raw_expert_index = item[3]
             # external position can be re-used only as a stable fallback
-            position = int(_position)
+            raw_position = item[4]
+            if not isinstance(raw_position, int) or isinstance(raw_position, bool):
+                raise SchemaValidationError("tuple position must be int")
+            position = raw_position
         else:
             raise SchemaValidationError("Tuple expert records must be (layer, score, secondary, expert) or plus position")
 
-        layer_index_i = _ensure_non_negative_int(layer_index, name="tuple layer_index")
-        expert_index_i = _ensure_non_negative_int(expert_index, name="tuple expert_index")
-        score_f = _ensure_float(score, name="tuple score")
-        secondary_f = _ensure_float(secondary, name="tuple secondary")
+        layer_index_i = _ensure_non_negative_int(raw_layer_index, name="tuple layer_index")
+        expert_index_i = _ensure_non_negative_int(raw_expert_index, name="tuple expert_index")
+        score_f = _ensure_float(raw_score, name="tuple score")
+        secondary_f = _ensure_float(raw_secondary, name="tuple secondary")
 
         key = _expert_sort_tuple(
             score=score_f,
@@ -946,9 +987,11 @@ def sort_plan_items(items: Iterable[PrunePlanItem]) -> Tuple[PrunePlanItem, ...]
     )
 
 
-def sort_topology(layers: Iterable[LayerTopology], *, with_ref_fallback: bool = True) -> Tuple[LayerTopology, ...]:
+def sort_topology(
+    layers: Iterable[LayerTopology], *, with_ref_fallback: bool = True
+) -> Tuple[LayerTopology, ...]:
     """Sort topologies by layer index with deterministic reference fallback."""
-    def _key(layer: LayerTopology) -> tuple[int, int, str, str]:
+    def _key(layer: LayerTopology) -> tuple[int, int, int, str]:
         ref_value = layer.layer_ref or layer.layer_name or ""
         ref_rank = layer.layer_index
         if with_ref_fallback and layer.layer_ref is not None:
@@ -999,7 +1042,7 @@ def _construct_from_payload(payload: Mapping[str, Any]) -> SchemaType:
     ctor = constructors.get(schema_type)
     if ctor is None:
         raise SchemaValidationError(f"Unsupported __schema_type '{schema_type}'")
-    return ctor.from_dict(mapping)  # type: ignore[return-value]
+    return cast(SchemaType, ctor.from_dict(mapping))
 
 
 def from_json(payload: Union[str, Mapping[str, Any], list[Any], tuple[Any, ...]]) -> Any:

@@ -158,3 +158,34 @@ def test_model_and_activation_objects_validate_bounds() -> None:
     )
     sorted_candidates = sort_experts([candidate, candidate])
     assert len(sorted_candidates) == 2
+
+
+def test_deterministic_default_json_for_default_plan_instances() -> None:
+    first = PrunePlan()
+    second = PrunePlan()
+    assert to_json(first) == to_json(second)
+
+
+def test_deterministic_default_json_for_default_manifest_instances() -> None:
+    first = RunArtifactManifest(run_id="run-001", command="scan")
+    second = RunArtifactManifest(run_id="run-001", command="scan")
+    assert to_json(first) == to_json(second)
+
+
+def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
+    plan = PrunePlan.from_dict(
+        {
+            "plan_id": "p",
+            "model_signature": "test",
+            "per_layer_plans": [
+                {
+                    "layer_index": 0,
+                    "keep_indices": [0, 1],
+                    "drop_indices": [],
+                    "source_expert_count": 2,
+                }
+            ],
+        }
+    )
+    assert isinstance(plan.per_layer_plans, tuple)
+    assert plan.per_layer_plans[0].keep_indices == (0, 1)
