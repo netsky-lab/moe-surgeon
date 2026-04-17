@@ -110,6 +110,23 @@ def test_gemma4_backend_extract_topology_returns_sorted_moe_layers() -> None:
     assert layers[2].module_paths["experts_down_proj"].endswith("layers.4.experts.down_proj")
 
 
+def test_gemma4_backend_iterates_only_configured_moe_layers_and_tensor_keys() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[3, 1])
+    state_dict: dict[str, FakeTensor] = {}
+    for layer_index in (1, 3):
+        state_dict.update(_layer_state(layer_index))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    layer_indices = backend.iter_moe_layer_indices(bundle)
+    layer_tensor_keys = backend.iter_moe_layer_tensor_keys(bundle)
+
+    assert layer_indices == (1, 3)
+    assert [layer_index for layer_index, _ in layer_tensor_keys] == [1, 3]
+    assert layer_tensor_keys[0][1]["router_proj"] == "model.language_model.layers.1.router.proj.weight"
+    assert layer_tensor_keys[1][1]["experts_down_proj"] == "model.language_model.layers.3.experts.down_proj"
+
+
 def test_gemma4_backend_missing_required_tensor_key_raises_topology_mismatch() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[0])
@@ -121,6 +138,34 @@ def test_gemma4_backend_missing_required_tensor_key_raises_topology_mismatch() -
         backend.extract_topology(bundle)
 
     assert "router.per_expert_scale" in str(exc_info.value)
+
+
+def test_gemma4_backend_detects_unexpected_moe_layer_tensor_prefixes() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[1, 3])
+    state_dict: dict[str, FakeTensor] = {}
+    for layer_index in (1, 2, 3):
+        state_dict.update(_layer_state(layer_index))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(TopologyMismatchError, match="Gemma4 MoE layer tensor topology mismatch") as exc_info:
+        backend.iter_moe_layer_tensor_keys(bundle)
+
+    assert "unexpected_moe_layers=2" in str(exc_info.value)
+
+
+def test_gemma4_backend_rejects_resolving_non_moe_layer_keys() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[1, 3])
+    state_dict: dict[str, FakeTensor] = {}
+    for layer_index in (1, 3):
+        state_dict.update(_layer_state(layer_index))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(TopologyMismatchError, match="requested Gemma4 layer is not configured as MoE") as exc_info:
+        backend.resolve_layer_tensor_keys(bundle, layer_index=2)
+
+    assert "moe_layer_indices=1,3" in str(exc_info.value)
 
 
 def test_gemma4_backend_router_and_expert_state_validate_shapes() -> None:

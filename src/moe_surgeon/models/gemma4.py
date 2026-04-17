@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from importlib import metadata as importlib_metadata
+import re
 from typing import Any, Mapping, Sequence, cast
 
 from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle, TensorMetadata
@@ -174,13 +175,29 @@ class Gemma4Backend:
 
         return self.extract_topology(bundle)
 
+    def iter_moe_layer_indices(self, bundle: LoadedBackendBundle) -> tuple[int, ...]:
+        """Return the ordered decoder-layer indices that are expected to host MoE blocks."""
+
+        topology = self._parse_bundle_topology(bundle)
+        return topology.moe_layer_indices
+
+    def iter_moe_layer_tensor_keys(
+        self,
+        bundle: LoadedBackendBundle,
+    ) -> tuple[tuple[int, Mapping[str, str]], ...]:
+        """Return ordered per-layer MoE tensor keys after full topology validation."""
+
+        topology = self._parse_bundle_topology(bundle)
+        discovered = self._discover_layer_tensor_keys(bundle, topology=topology)
+        return tuple((layer_index, dict(discovered[layer_index])) for layer_index in topology.moe_layer_indices)
+
     def extract_topology(self, bundle: LoadedBackendBundle) -> tuple[LayerTopology, ...]:
         """Discover MoE decoder layers from config and state-key metadata."""
 
         topology = self._parse_bundle_topology(bundle)
+        layer_tensor_keys = self.iter_moe_layer_tensor_keys(bundle)
         layers: list[LayerTopology] = []
-        for layer_index in topology.moe_layer_indices:
-            tensor_keys = self.resolve_layer_tensor_keys(bundle, layer_index=layer_index)
+        for layer_index, tensor_keys in layer_tensor_keys:
             layer_name = self._layer_prefix(bundle, layer_index=layer_index)
             layers.append(
                 LayerTopology(
@@ -209,6 +226,14 @@ class Gemma4Backend:
     ) -> Mapping[str, str]:
         """Resolve and validate required tensor keys for one Gemma 4 MoE layer."""
 
+        topology = self._parse_bundle_topology(bundle)
+        if layer_index not in topology.moe_layer_indices:
+            raise TopologyMismatchError(
+                "requested Gemma4 layer is not configured as MoE",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer_index,
+                details={"moe_layer_indices": ",".join(str(index) for index in topology.moe_layer_indices)},
+            )
         available = self._state_index(bundle)
         prefix = self._layer_prefix(bundle, layer_index=layer_index)
         resolved = {name: f"{prefix}.{suffix}" for name, suffix in _REQUIRED_LAYER_KEYS.items()}
@@ -611,13 +636,72 @@ class Gemma4Backend:
         )
 
     def _layer_prefix(self, bundle: LoadedBackendBundle, *, layer_index: int) -> str:
+        template = self._layer_prefix_template(bundle)
+        return template.format(layer_index=layer_index)
+
+    def _layer_prefix_template(self, bundle: LoadedBackendBundle) -> str:
         template = bundle.metadata.get("layer_prefix_template", _DEFAULT_LAYER_PREFIX)
         if not isinstance(template, str) or "{layer_index}" not in template:
             raise TopologyMismatchError(
                 "Gemma4 layer prefix template must contain {layer_index}",
                 model_id=bundle.model_handle.model_id,
             )
-        return template.format(layer_index=layer_index)
+        return template
+
+    def _layer_tensor_pattern(self, bundle: LoadedBackendBundle) -> re.Pattern[str]:
+        template = self._layer_prefix_template(bundle)
+        prefix_before, prefix_after = template.split("{layer_index}", maxsplit=1)
+        suffixes = "|".join(re.escape(suffix) for suffix in sorted(_REQUIRED_LAYER_KEYS.values()))
+        return re.compile(
+            rf"^{re.escape(prefix_before)}(?P<layer_index>\d+){re.escape(prefix_after)}\.(?P<suffix>{suffixes})$"
+        )
+
+    def _discover_layer_tensor_keys(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        topology: Gemma4TopologyConfig,
+    ) -> Mapping[int, Mapping[str, str]]:
+        pattern = self._layer_tensor_pattern(bundle)
+        suffix_to_name = {suffix: name for name, suffix in _REQUIRED_LAYER_KEYS.items()}
+        matched: dict[int, dict[str, str]] = {}
+        for tensor_key in sorted(str(key) for key in self._state_index(bundle)):
+            match = pattern.match(tensor_key)
+            if match is None:
+                continue
+            layer_index = int(match.group("layer_index"))
+            tensor_name = suffix_to_name[match.group("suffix")]
+            matched.setdefault(layer_index, {})[tensor_name] = tensor_key
+
+        expected = set(topology.moe_layer_indices)
+        unexpected_layers = tuple(sorted(layer_index for layer_index in matched if layer_index not in expected))
+        missing_layer_indices: list[int] = []
+        missing_by_layer: list[str] = []
+        for layer_index in topology.moe_layer_indices:
+            layer_keys = matched.get(layer_index, {})
+            missing = [name for name in sorted(_REQUIRED_LAYER_KEYS) if name not in layer_keys]
+            if missing:
+                missing_layer_indices.append(layer_index)
+                missing_by_layer.append(f"{layer_index}:{','.join(missing)}")
+
+        if unexpected_layers or missing_by_layer:
+            if not unexpected_layers and len(missing_layer_indices) == 1:
+                self.resolve_layer_tensor_keys(bundle, layer_index=missing_layer_indices[0])
+            details: dict[str, object] = {
+                "expected_moe_layers": ",".join(str(index) for index in topology.moe_layer_indices),
+                "layer_prefix_template": self._layer_prefix_template(bundle),
+            }
+            if unexpected_layers:
+                details["unexpected_moe_layers"] = ",".join(str(index) for index in unexpected_layers)
+            if missing_by_layer:
+                details["missing_keys_by_layer"] = ";".join(missing_by_layer)
+            raise TopologyMismatchError(
+                "Gemma4 MoE layer tensor topology mismatch",
+                model_id=bundle.model_handle.model_id,
+                details=details,
+            )
+
+        return {layer_index: dict(sorted(layer_keys.items())) for layer_index, layer_keys in sorted(matched.items())}
 
     def _tensor_shape(self, value: object, *, allow_scalar: bool = False) -> tuple[int, ...]:
         shape = getattr(value, "shape", value)

@@ -17,7 +17,10 @@
   covering lightweight imports, backend support matching, deterministic layer
   ordering, missing-key diagnostics, synthetic metadata capture, and the
   explicit unsupported-Transformers runtime guard for local `transformers 4.51.3`.
+- Implemented explicit Gemma 4 MoE layer traversal in `src/moe_surgeon/models/gemma4.py`, including deterministic ordered MoE layer enumeration, config-vs-state tensor-key discovery, and fail-fast diagnostics for unexpected or incomplete MoE layer key sets.
+- Expanded `tests/test_models_gemma4.py` with offline regression coverage for ordered MoE key traversal, non-MoE layer rejection, and unexpected layer-prefix mismatch handling.
 
+## 2026-04-17
 - Restored the `moe_surgeon.models.backend.BackendRegistry` compatibility
   import as a lazy export so the legacy import path still works without
   recreating the `backend.py`/`registry.py` circular import or adding import
