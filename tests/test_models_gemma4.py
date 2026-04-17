@@ -340,15 +340,29 @@ def test_gemma4_backend_load_populates_model_handle_metadata_with_monkeypatched_
     assert bundle.metadata["backend_version"] == backend.backend_version
 
 
-def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing() -> None:
+def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = Gemma4Backend()
     signature = BackendSignature.from_mapping(_gemma4_config())
+
+    def fake_import_module(name: str) -> object:
+        if name == "transformers":
+            return SimpleNamespace(AutoTokenizer=object())
+        raise AssertionError(name)
+
+    monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
+    monkeypatch.setattr(
+        Gemma4Backend,
+        "_installed_version",
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
+    )
 
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
         backend.load(signature)
 
     message = str(exc_info.value)
-    assert "installed_transformers_version=4.51.3" in message
+    assert "installed_transformers_version=5.5.4" in message
     assert "required_symbol=Gemma4ForConditionalGeneration" in message
     assert "support_added_on=2026-04-01" in message
 

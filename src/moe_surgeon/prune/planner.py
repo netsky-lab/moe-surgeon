@@ -41,6 +41,8 @@ class LayerConstraintOverride:
     def __post_init__(self) -> None:
         for field_name in ("target_experts", "min_experts", "max_experts"):
             value = getattr(self, field_name)
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+                raise ValueError(f"{field_name} must be an integer when provided")
             if value is not None and value < 0:
                 raise ValueError(f"{field_name} must be >= 0")
             if value == 0:
@@ -63,6 +65,16 @@ class PlannerConstraints:
     layer_overrides: Mapping[int, LayerConstraintOverride] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        if self.global_target_experts is not None and (
+            not isinstance(self.global_target_experts, int) or isinstance(self.global_target_experts, bool)
+        ):
+            raise ValueError("global_target_experts must be an integer when provided")
+        if not isinstance(self.min_experts_per_layer, int) or isinstance(self.min_experts_per_layer, bool):
+            raise ValueError("min_experts_per_layer must be an integer")
+        if self.max_experts_per_layer is not None and (
+            not isinstance(self.max_experts_per_layer, int) or isinstance(self.max_experts_per_layer, bool)
+        ):
+            raise ValueError("max_experts_per_layer must be an integer when provided")
         if self.global_target_experts is not None and self.global_target_experts <= 0:
             raise ValueError("global_target_experts must be >= 1 when provided")
         if self.min_experts_per_layer <= 0:
@@ -74,7 +86,18 @@ class PlannerConstraints:
             and self.min_experts_per_layer > self.max_experts_per_layer
         ):
             raise ValueError("min_experts_per_layer cannot exceed max_experts_per_layer")
-        normalized = dict(sorted((int(layer), override) for layer, override in self.layer_overrides.items()))
+        normalized_items: list[tuple[int, LayerConstraintOverride]] = []
+        for layer, override in self.layer_overrides.items():
+            if not isinstance(layer, int) or isinstance(layer, bool):
+                raise ValueError("layer_overrides keys must be integers")
+            if layer < 0:
+                raise ValueError("layer_overrides keys must be >= 0")
+            if not isinstance(override, LayerConstraintOverride):
+                raise ValueError(
+                    "layer_overrides values must be LayerConstraintOverride instances"
+                )
+            normalized_items.append((layer, override))
+        normalized = dict(sorted(normalized_items))
         for layer_index in normalized:
             if layer_index < 0:
                 raise ValueError("layer_overrides keys must be >= 0")
@@ -236,6 +259,10 @@ def _layer_budgets(
             if override.max_experts is not None:
                 maximum_keep = min(maximum_keep, override.max_experts)
             if override.target_experts is not None:
+                if override.target_experts < constraints.min_experts_per_layer:
+                    raise ValueError(
+                        "layer target_experts cannot be below min_experts_per_layer"
+                    )
                 minimum_keep = override.target_experts
                 maximum_keep = override.target_experts
         if minimum_keep > layer.expert_count:

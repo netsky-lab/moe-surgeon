@@ -206,6 +206,21 @@ def test_built_in_strategies_validate_missing_inputs_and_partial_coverage() -> N
         )
 
 
+def test_built_in_strategies_reject_duplicate_static_inputs_and_combined_activation_mismatch() -> None:
+    with pytest.raises(TopologyMismatchError, match="duplicate expert_stats entry"):
+        strategy_registry.get("router_mass").build_candidates(
+            _topology(),
+            expert_stats=_expert_stats() + (_expert_stats()[0],),
+        )
+
+    with pytest.raises(TopologyMismatchError, match="activation_stats coverage does not match topology"):
+        strategy_registry.get("combined").build_candidates(
+            _topology(),
+            expert_stats=_expert_stats(),
+            activation_stats=_activation_stats()[:-1],
+        )
+
+
 def test_strategy_registry_can_inject_custom_strategy_without_planner_changes() -> None:
     @dataclass(frozen=True)
     class CustomStrategy:
@@ -293,6 +308,9 @@ def test_planner_rejects_zero_survivor_constraints_early() -> None:
     with pytest.raises(ValueError, match="max_experts_per_layer must be >= 1 when provided"):
         PlannerConstraints(max_experts_per_layer=0)
 
+    with pytest.raises(ValueError, match="min_experts_per_layer must be an integer"):
+        PlannerConstraints(min_experts_per_layer=1.5)  # type: ignore[arg-type]
+
     with pytest.raises(ValueError, match="target_experts must be >= 1 when provided"):
         LayerConstraintOverride(target_experts=0)
 
@@ -301,6 +319,23 @@ def test_planner_rejects_zero_survivor_constraints_early() -> None:
 
     with pytest.raises(ValueError, match="max_experts must be >= 1 when provided"):
         LayerConstraintOverride(max_experts=0)
+
+    with pytest.raises(ValueError, match="target_experts must be an integer when provided"):
+        LayerConstraintOverride(target_experts=1.2)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="min_experts must be an integer when provided"):
+        LayerConstraintOverride(min_experts=1.2)  # type: ignore[arg-type]
+
+    with pytest.raises(ValueError, match="max_experts must be an integer when provided"):
+        LayerConstraintOverride(max_experts=1.2)  # type: ignore[arg-type]
+
+
+def test_planner_rejects_invalid_layer_override_keys_and_values() -> None:
+    with pytest.raises(ValueError, match="layer_overrides keys must be integers"):
+        PlannerConstraints(layer_overrides={1.5: LayerConstraintOverride(target_experts=1)})  # type: ignore[dict-item]
+
+    with pytest.raises(ValueError, match="layer_overrides values must be LayerConstraintOverride instances"):
+        PlannerConstraints(layer_overrides={1: None})  # type: ignore[dict-item]
 
 
 def test_planner_rejects_infeasible_layer_bounds() -> None:
@@ -342,6 +377,21 @@ def test_planner_honors_exact_per_layer_override() -> None:
 
     assert [item.keep_indices for item in plan.per_layer_plans] == [(0, 1), (0, 1)]
     assert plan.constraints["layer_1_target_experts"] == 2
+
+
+def test_planner_rejects_target_override_below_minimum_survivor_guardrail() -> None:
+    with pytest.raises(ValueError, match="target_experts cannot be below min_experts_per_layer"):
+        build_prune_plan(
+            _topology(),
+            strategy="frequency",
+            activation_stats=_activation_stats(),
+            constraints=PlannerConstraints(
+                global_target_experts=3,
+                min_experts_per_layer=2,
+                layer_overrides={0: LayerConstraintOverride(target_experts=1)},
+            ),
+            model_signature="model-a",
+        )
 
 
 def test_combined_strategy_fuses_static_and_runtime_signals() -> None:
