@@ -13,6 +13,37 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T06:18:49.939Z"
+        },
+        {
+          "approach": "Fixed the two verification gaps in [tests/test_analysis_scan.py](/home/netsky/dev/labs/moe-surgeon/tests/test_analysis_scan.py).\n\n1. Added direct `_require_tensor()` regressions for a materialized `state_dict`:\n- missing required router tensor payload now raises `TopologyMismatchError`\n- non-`torch.",
+          "success": false,
+          "error": "`src/moe_surgeon/analysis/metrics.py:37,48,84,93,96` still raises generic `ValueError` for malformed scan inputs. I reproduced this through the real scan path with a NaN `router.proj.weight`, and `sca",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/analysis/metrics.py:37,48,84,93,96` still raises generic `ValueError` for malformed scan inputs. I reproduced this through the real scan path with a NaN `router.proj.weight`, and `scan_model()` surfaced `ValueError: router_probabilities must be finite` with no model/layer/tensor context. That violates the AGENTS.md error contract and means the task is not complete.",
+            "`src/moe_surgeon/analysis/metrics.py:202` still contains a production `assert isinstance(item, ExpertStats)`. If that invariant is ever violated, the analyzer will leak `AssertionError` instead of an explicit domain error. Replace it with explicit validation or remove the assertion from production code.",
+            "`tests/test_analysis_scan.py` now covers missing materialized tensors, non-tensor payloads, and backend-enforced router shape mismatches, but it still lacks a regression for malformed metric inputs such as non-finite router weights or invalid `per_expert_scale` rank. Add coverage that `scan_model()` converts those failures into domain errors with layer/tensor diagnostics."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T07:10:15.598Z"
+        }
+      ],
+      "stuckSince": null
+    },
+    "350a6c03-4ae3-42f6-8de0-0c2aae9e845b": {
+      "attempts": [
+        {
+          "approach": "[Create profiler instrumentation utility]: **Execution Summary**\n\n[1] Done. Added the runtime profiler core in [src/moe_surgeon/runtime/profiler.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/runtime/profiler.py) plus the compatibility import in [src/moe_surgeon/runtime/bench.py](/home/netsky",
+          "success": false,
+          "error": "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_pr",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_probabilities, top_k_weights, top_k_index)` and the decoder consumes `_, top_k_weights, top_k_index = self.router(...)`. Because `src/moe_surgeon/models/gemma4.py:402-412` hooks `layer.router`, real Gemma4 runs will fail with `top_k_indices last dimension mismatch` instead of collecting activations, so the task’s core runtime-capture acceptance is not met.",
+            "`src/moe_surgeon/runtime/profiler.py:421,429-430,488,494,546,652` raises `ShapeInvariantViolationError` without the required model/layer diagnostic context on several malformed-output branches. The PM criteria asked for detailed diagnostics; today a bad tuple shape reproduces as only `router forward output sequence must contain 2 or 3 items` with no `model_id` or `layer_index`.",
+            "`tests/test_runtime_profiler.py` only exercises synthetic dict/object outputs and basic padding aggregation. It does not cover the actual Gemma4 router tuple contract, malformed container branches, missing optional score capture, or out-of-range expert indices, so the new runtime path is not adequately verified against the backend it is supposed to support."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T06:58:04.996Z"
         }
       ],
       "stuckSince": null
@@ -20,6 +51,6 @@
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T06:18:49.939Z"
+    "lastUpdated": "2026-04-17T07:10:15.598Z"
   }
 }
