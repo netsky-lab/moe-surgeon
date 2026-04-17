@@ -75,6 +75,10 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Completed P5 static router metric hardening in `src/moe_surgeon/analysis/metrics.py` and `src/moe_surgeon/analysis/scan.py` by deriving deterministic softmax-based expert distributions, replacing unstable `topk` tie handling with stable sorting, and adding an aggregate scan summary over ordered MoE layers.
+- Expanded `tests/test_analysis_scan.py` with deterministic tie-case coverage, aggregate-summary assertions, and scan regression checks for finite non-negative expert metrics.
+
+## 2026-04-17
 - Hardened the executable module entrypoint in `src/moe_surgeon/__main__.py` by exposing a stable module-level `main()` wrapper that delegates to the lightweight Click bootstrap with the canonical `python -m moe_surgeon` program name.
 - Added CLI regression coverage in `tests/test_cli.py` for importing the module entrypoint directly and invoking its help path without pulling in heavy runtime dependencies.
 - Completed P2 package bootstrap wiring in `pyproject.toml`, `src/moe_surgeon/cli/main.py`, and `src/moe_surgeon/__main__.py` with an installable `moe-surgeon` script, module execution support, and placeholder Click subcommands (`scan`, `bench`, `prune`, `export`).

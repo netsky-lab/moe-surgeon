@@ -127,8 +127,26 @@ def test_build_expert_stats_returns_finite_ranked_metrics() -> None:
         assert stat.router_bias_norm is not None
         assert stat.router_bias_norm >= 0.0
         assert math.isfinite(stat.metadata["top_k_mass_proxy"])
-        assert math.isfinite(stat.metadata["bias_adjusted_mass"])
+        assert math.isfinite(stat.metadata["bias_adjusted_score"])
         assert stat.metadata["feature_count_proxy"] >= 0
+
+
+def test_build_expert_stats_breaks_ties_deterministically() -> None:
+    router_proj = torch.zeros((4, 3), dtype=torch.float32)
+
+    stats, summary = build_expert_stats(
+        layer_index=2,
+        router_proj_weight=router_proj,
+        top_k=2,
+    )
+
+    assert [stat.expert_index for stat in stats] == [0, 1, 2, 3]
+    assert [stat.static_rank for stat in stats] == [0, 1, 2, 3]
+    assert all(stat.static_gate_mass == pytest.approx(0.25) for stat in stats)
+    assert all(stat.metadata["top_k_mass_proxy"] == pytest.approx(0.25) for stat in stats[:2])
+    assert all(stat.metadata["top_k_mass_proxy"] == pytest.approx(0.0) for stat in stats[2:])
+    assert summary.total_static_gate_mass == pytest.approx(1.0)
+    assert summary.total_top_k_mass_proxy == pytest.approx(0.5)
 
 
 def test_scan_model_returns_one_router_state_per_moe_layer() -> None:
@@ -145,8 +163,11 @@ def test_scan_model_returns_one_router_state_per_moe_layer() -> None:
     assert [router.layer_index for router in result.router_states] == [1, 3]
     assert len(result.router_states) == len(result.layers) == 2
     assert len(result.layer_summaries) == 2
+    assert result.aggregate_summary.layer_count == 2
+    assert result.aggregate_summary.expert_stat_count == 8
     assert result.manifest.command == "scan"
     assert result.manifest.metadata["moe_layer_count"] == 2
+    assert result.manifest.metadata["total_static_gate_mass"] == pytest.approx(2.0)
 
     for layer, summary in zip(result.layers, result.layer_summaries):
         per_layer = [stat for stat in result.expert_stats if stat.layer_index == layer.layer_index]
@@ -156,6 +177,9 @@ def test_scan_model_returns_one_router_state_per_moe_layer() -> None:
         assert sum(stat.static_gate_mass for stat in per_layer) == pytest.approx(1.0)
         assert summary.total_static_gate_mass == pytest.approx(1.0)
         assert 0.0 <= summary.normalized_entropy <= 1.0
+
+    assert result.aggregate_summary.total_static_gate_mass == pytest.approx(2.0)
+    assert 0.0 <= result.aggregate_summary.mean_normalized_entropy <= 1.0
 
     repeated = scan_model(bundle, backend=backend)
     assert repeated == result

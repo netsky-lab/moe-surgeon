@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import fsum
 from typing import Mapping
 
 import torch
@@ -14,6 +15,17 @@ from moe_surgeon.schemas import ExpertStats, LayerTopology, RouterState, RunArti
 
 
 @dataclass(frozen=True)
+class StaticScanAggregateSummary:
+    """Deterministic aggregate scan summary across all MoE router layers."""
+
+    layer_count: int
+    expert_stat_count: int
+    total_static_gate_mass: float
+    total_top_k_mass_proxy: float
+    mean_normalized_entropy: float
+
+
+@dataclass(frozen=True)
 class StaticScanResult:
     """Deterministic static scan payload for one loaded MoE model bundle."""
 
@@ -21,6 +33,7 @@ class StaticScanResult:
     router_states: tuple[RouterState, ...]
     expert_stats: tuple[ExpertStats, ...]
     layer_summaries: tuple[RouterMetricSummary, ...]
+    aggregate_summary: StaticScanAggregateSummary
     manifest: RunArtifactManifest
 
 
@@ -120,6 +133,22 @@ def _enrich_router_state(
     )
 
 
+def _aggregate_summary(layer_summaries: list[RouterMetricSummary], expert_stats: list[ExpertStats]) -> StaticScanAggregateSummary:
+    """Reduce per-layer metrics into a deterministic scan-level summary."""
+
+    layer_count = len(layer_summaries)
+    normalized_entropy = 0.0
+    if layer_count > 0:
+        normalized_entropy = fsum(summary.normalized_entropy for summary in layer_summaries) / float(layer_count)
+    return StaticScanAggregateSummary(
+        layer_count=layer_count,
+        expert_stat_count=len(expert_stats),
+        total_static_gate_mass=fsum(summary.total_static_gate_mass for summary in layer_summaries),
+        total_top_k_mass_proxy=fsum(summary.total_top_k_mass_proxy for summary in layer_summaries),
+        mean_normalized_entropy=normalized_entropy,
+    )
+
+
 def scan_model(
     bundle: LoadedBackendBundle,
     *,
@@ -162,6 +191,7 @@ def scan_model(
         expert_stats.extend(layer_stats)
         layer_summaries.append(layer_summary)
 
+    aggregate_summary = _aggregate_summary(layer_summaries, expert_stats)
     manifest = RunArtifactManifest(
         run_id=f"scan-static-{bundle.model_handle.model_fingerprint[:12]}",
         command="scan",
@@ -173,6 +203,9 @@ def scan_model(
             "moe_layer_count": len(layers),
             "expert_stat_count": len(expert_stats),
             "backend_name": bundle.backend_name,
+            "total_static_gate_mass": aggregate_summary.total_static_gate_mass,
+            "total_top_k_mass_proxy": aggregate_summary.total_top_k_mass_proxy,
+            "mean_normalized_entropy": aggregate_summary.mean_normalized_entropy,
         },
     )
     return StaticScanResult(
@@ -180,8 +213,9 @@ def scan_model(
         router_states=tuple(router_states),
         expert_stats=tuple(expert_stats),
         layer_summaries=tuple(layer_summaries),
+        aggregate_summary=aggregate_summary,
         manifest=manifest,
     )
 
 
-__all__ = ["StaticScanResult", "scan_model"]
+__all__ = ["StaticScanAggregateSummary", "StaticScanResult", "scan_model"]
