@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a Gemma4 packaging-floor regression in `tests/test_models_gemma4.py`
+  that asserts the backend-owned `transformers>=5.5.0` runtime contract matches
+  both `pyproject.toml` and the checked-in generated packaging metadata
+  (`src/moe_surgeon.egg-info/PKG-INFO` and `requires.txt`), reducing the chance
+  of future install/runtime drift.
 - Preserved the pinned `tiny-random/gemma-4-moe` snapshot revision in the live Gemma4 profiler integration helper, strengthened generation-path assertions so live forward and generation captures both validate the full router output contract, updated Gemma4 router-scale validation to accept the hidden-size vector shape used by live Transformers Gemma4 routers, relaxed runtime aggregation to accept signed finite router weights emitted after learned per-expert scaling, centralized the backend-owned Gemma4 runtime contract so both offline and live checks share the same `transformers>=5.5.0` floor, support date, and remediation guidance, tightened the offline Gemma4 backend tests so both unsupported-runtime branches assert the same canonical diagnostics and guidance text, and rewired the live Gemma4 profiler gate to call that same shared backend contract instead of maintaining its own version/symbol skip logic.
 - Added offline-safe runtime profiling utilities in
   `src/moe_surgeon/runtime/profiler.py` and `src/moe_surgeon/runtime/bench.py`,

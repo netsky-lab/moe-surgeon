@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.parser import Parser
 from pathlib import Path
 from types import SimpleNamespace
 import subprocess
@@ -96,6 +97,33 @@ def _assert_runtime_contract_diagnostics(
     assert f"support_added_on={GEMMA4_SUPPORT_ADDED_ON}" in message
     assert f"guidance={gemma4_runtime_guidance(installed_version)}" in message
     assert "source=google/gemma-4-27b" in message
+
+
+def _project_dependency(requirement_name: str) -> str:
+    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = project["project"]["dependencies"]
+
+    for dependency in dependencies:
+        if dependency.startswith(f"{requirement_name}>="):
+            return dependency
+    raise AssertionError(f"missing project dependency {requirement_name!r}")
+
+
+def _pkg_info_requirements() -> tuple[str, ...]:
+    metadata = Parser().parsestr(
+        Path("src/moe_surgeon.egg-info/PKG-INFO").read_text(encoding="utf-8")
+    )
+    return tuple(metadata.get_all("Requires-Dist") or ())
+
+
+def _requires_txt_default_requirements() -> tuple[str, ...]:
+    requirements: list[str] = []
+    for raw_line in Path("src/moe_surgeon.egg-info/requires.txt").read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("["):
+            continue
+        requirements.append(line)
+    return tuple(requirements)
 
 
 def test_gemma4_module_import_is_lightweight_in_fresh_process() -> None:
@@ -490,10 +518,18 @@ def test_gemma4_backend_load_normalizes_lazy_symbol_resolution_errors_at_support
 
 
 def test_gemma4_transformers_floor_matches_pyproject_dependency() -> None:
-    project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
-    dependencies = project["project"]["dependencies"]
+    assert _project_dependency("transformers") == (
+        f"transformers>={GEMMA4_MIN_TRANSFORMERS_VERSION}; python_version >= '3.10'"
+    )
 
-    assert f"transformers>={GEMMA4_MIN_TRANSFORMERS_VERSION}; python_version >= '3.10'" in dependencies
+
+def test_gemma4_transformers_floor_matches_generated_packaging_metadata() -> None:
+    expected_pkg_info_requirement = (
+        f'transformers>={GEMMA4_MIN_TRANSFORMERS_VERSION}; python_version >= "3.10"'
+    )
+
+    assert expected_pkg_info_requirement in _pkg_info_requirements()
+    assert f"transformers>={GEMMA4_MIN_TRANSFORMERS_VERSION}" in _requires_txt_default_requirements()
 
 
 def test_default_registry_resolves_gemma4_backend_from_mapping_and_signature() -> None:

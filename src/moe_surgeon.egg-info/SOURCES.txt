@@ -4,6 +4,7 @@ src/moe_surgeon/__init__.py
 src/moe_surgeon/__main__.py
 src/moe_surgeon/repo_metrics.py
 src/moe_surgeon/schemas.py
+src/moe_surgeon/test_env.py
 src/moe_surgeon.egg-info/PKG-INFO
 src/moe_surgeon.egg-info/SOURCES.txt
 src/moe_surgeon.egg-info/dependency_links.txt
