@@ -96,8 +96,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Run `npm run lint` for the Ruff gate defined in `AGENTS.md`.
 - Run `npm run typecheck` for the `python -m mypy src` gate.
 - Run `npm test` for the `python -m pytest` suite.
-- `.supervisor/project.json` defines the repo verify commands for lint, typecheck,
-  and tests.
+- `.supervisor/project.json` routes supervisor checks through the repo metrics
+  collector and stores the underlying raw lint, typecheck, and test commands in
+  one place.
 - Run `npm run metrics` to execute that config through the repo-owned collector
   and emit a machine-readable summary of named `lint`, `typecheck`, and `tests`
   checks.

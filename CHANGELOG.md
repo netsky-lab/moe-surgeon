@@ -6,9 +6,11 @@
   collector that reads `.supervisor/project.json`, runs the configured checks
   as named `lint`, `typecheck`, and `tests` metrics, and writes a canonical
   JSON artifact instead of depending on stale supervisor logs alone.
-- Updated `package.json` so `npm run metrics` uses the repo-owned collector, and
-  expanded `tests/test_repo_metrics.py` to verify the emitted metrics artifact
-  and refreshed task-log summary lines.
+- Updated `package.json`, `.supervisor/project.json`, and
+  `.github/workflows/metrics.yml` so package scripts, supervisor verification,
+  and CI all execute through the same repo metrics collector entrypoint.
+- Expanded `tests/test_repo_metrics.py` to verify the collector-backed
+  supervisor wiring, emitted metrics artifacts, and single-check collector mode.
 - Updated `README.md` to describe the repo-owned metrics collector and its
   machine-readable output.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`

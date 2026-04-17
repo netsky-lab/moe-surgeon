@@ -1,5 +1,13 @@
 {
   "verifyConfig": {
+    "lintCommand": "python -m moe_surgeon.repo_metrics --check lint",
+    "typeCheckCommand": "python -m moe_surgeon.repo_metrics --check typecheck",
+    "buildCommand": null,
+    "testCommand": "python -m moe_surgeon.repo_metrics --check tests",
+    "coverageCommand": null,
+    "browserTestCommand": null
+  },
+  "repoMetricsConfig": {
     "lintCommand": "npm run lint",
     "typeCheckCommand": "npm run typecheck",
     "buildCommand": null,

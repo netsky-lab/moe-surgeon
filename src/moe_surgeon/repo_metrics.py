@@ -57,31 +57,33 @@ class MetricsReport:
 
 
 def load_verify_config(root_path: Path) -> VerifyConfig:
-    """Load supervisor verify commands from the repo-local project config."""
+    """Load repo metrics commands from the repo-local project config."""
 
     config_path = root_path / ".supervisor" / "project.json"
     payload = json.loads(config_path.read_text(encoding="utf-8"))
-    verify_config = payload.get("verifyConfig")
-    if not isinstance(verify_config, dict):
-        raise ValueError("Missing verifyConfig mapping in .supervisor/project.json")
+    metrics_config = payload.get("repoMetricsConfig", payload.get("verifyConfig"))
+    if not isinstance(metrics_config, dict):
+        raise ValueError("Missing repoMetricsConfig mapping in .supervisor/project.json")
 
     return VerifyConfig(
-        lint_command=_optional_command(verify_config.get("lintCommand")),
-        typecheck_command=_optional_command(verify_config.get("typeCheckCommand")),
-        build_command=_optional_command(verify_config.get("buildCommand")),
-        test_command=_optional_command(verify_config.get("testCommand")),
-        coverage_command=_optional_command(verify_config.get("coverageCommand")),
-        browser_test_command=_optional_command(verify_config.get("browserTestCommand")),
+        lint_command=_optional_command(metrics_config.get("lintCommand")),
+        typecheck_command=_optional_command(metrics_config.get("typeCheckCommand")),
+        build_command=_optional_command(metrics_config.get("buildCommand")),
+        test_command=_optional_command(metrics_config.get("testCommand")),
+        coverage_command=_optional_command(metrics_config.get("coverageCommand")),
+        browser_test_command=_optional_command(metrics_config.get("browserTestCommand")),
     )
 
 
-def collect_metrics(root_path: Path, *, timeout_seconds: int) -> MetricsReport:
+def collect_metrics(root_path: Path, *, timeout_seconds: int, selected_check: str | None = None) -> MetricsReport:
     """Run configured repo checks and return a deterministic metrics report."""
 
     config = load_verify_config(root_path)
     checks: list[MetricCheck] = []
 
     for category, name, command in _iter_checks(config):
+        if selected_check is not None and name != selected_check:
+            continue
         checks.append(_run_check(root_path, category=category, name=name, command=command, timeout_seconds=timeout_seconds))
 
     passed = sum(1 for check in checks if check.passed)
@@ -146,10 +148,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-id", help="Optional supervisor task id used to choose default artifact and log paths.")
     parser.add_argument("--output", type=Path, help="Optional path for the JSON metrics artifact.")
     parser.add_argument("--timeout-seconds", type=int, default=600, help="Per-check timeout in seconds.")
+    parser.add_argument(
+        "--check",
+        choices=("lint", "typecheck", "build", "tests", "coverage", "browser_tests"),
+        help="Optional single check to run via the collector entrypoint.",
+    )
     args = parser.parse_args(argv)
 
     root_path = args.root.resolve()
-    report = collect_metrics(root_path, timeout_seconds=args.timeout_seconds)
+    report = collect_metrics(root_path, timeout_seconds=args.timeout_seconds, selected_check=args.check)
     final_report = MetricsReport(
         task_id=args.task_id,
         collected_at=report.collected_at,
