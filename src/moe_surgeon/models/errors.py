@@ -18,6 +18,12 @@ def _format_shape(shape: ShapeLike) -> str:
     return "x".join(str(dim) for dim in shape) or "empty"
 
 
+def _format_detail_value(value: object) -> str:
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item) for item in value)
+    return str(value)
+
+
 def _with_legacy_details(
     details: Mapping[str, object] | None,
     legacy_args: tuple[object, ...],
@@ -61,7 +67,7 @@ class DiagnosticContext:
         if self.actual_shape is not None:
             parts.append(f"actual_shape={_format_shape(self.actual_shape)}")
         for key in sorted(self.details):
-            parts.append(f"{key}={self.details[key]}")
+            parts.append(f"{key}={_format_detail_value(self.details[key])}")
         return ", ".join(parts)
 
 

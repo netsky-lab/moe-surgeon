@@ -8,6 +8,7 @@ preserved through a lazy module attribute to avoid a circular import.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Mapping, Protocol, Sequence
 
@@ -156,6 +157,29 @@ class ModelBackend(Protocol):
         """Validate layer-level topology and routing invariants."""
 
 
+@lru_cache(maxsize=1)
+def build_backend_registry() -> "BackendRegistry":
+    """Build the default deterministic backend registry lazily."""
+
+    from moe_surgeon.models.gemma4 import Gemma4Backend
+    from moe_surgeon.models.registry import BackendRegistry
+
+    registry = BackendRegistry()
+    registry.register(Gemma4Backend(), priority=100)
+    return registry
+
+
+def resolve_backend(
+    signature: BackendSignatureInput,
+    *,
+    model_id: str | None = None,
+    source_path: str | Path | None = None,
+) -> ModelBackend:
+    """Resolve a backend from the default deterministic registry."""
+
+    return build_backend_registry().resolve(signature, model_id=model_id, source_path=source_path)
+
+
 def __getattr__(name: str) -> object:
     """Lazily resolve compatibility exports without importing them on module load."""
 
@@ -171,8 +195,10 @@ __all__ = [
     "BackendRegistry",
     "BackendSignatureInput",
     "BackendSignature",
+    "build_backend_registry",
     "coerce_backend_signature",
     "LoadedBackendBundle",
     "ModelBackend",
+    "resolve_backend",
     "TensorMetadata",
 ]

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
+  with strict config validation, deterministic MoE layer discovery, required
+  tensor-key checks, and router/expert tensor diagnostics for the documented
+  `router.proj`, `router.scale`, `router.per_expert_scale`,
+  `experts.gate_up_proj`, and `experts.down_proj` families.
+- Added lazy default backend registration helpers in
+  `src/moe_surgeon/models/backend.py` so Gemma 4 can be resolved from either a
+  lightweight config mapping or an explicit `BackendSignature` without making
+  `moe_surgeon.models.backend` import heavy runtime dependencies.
+- Hardened model-domain diagnostic formatting for sequence-valued details in
+  `src/moe_surgeon/models/errors.py`.
+- Added focused Gemma 4 regression coverage in `tests/test_models_gemma4.py`
+  covering lightweight imports, backend support matching, deterministic layer
+  ordering, missing-key diagnostics, synthetic metadata capture, and the
+  explicit unsupported-Transformers runtime guard for local `transformers 4.51.3`.
+
 - Restored the `moe_surgeon.models.backend.BackendRegistry` compatibility
   import as a lazy export so the legacy import path still works without
   recreating the `backend.py`/`registry.py` circular import or adding import

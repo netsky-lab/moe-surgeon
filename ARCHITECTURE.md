@@ -21,7 +21,7 @@ moe_surgeon/
     - backend.py
     - registry.py
     - errors.py
-    - gemma4.py (future)
+    - gemma4.py
   - analysis/
     - __init__.py
     - scan.py (future)
@@ -55,6 +55,10 @@ The backend contract exposes:
 A registry resolves one backend per model/config signature with deterministic
 priority ordering, duplicate-name protection, and explicit unsupported or
 ambiguous-match diagnostics.
+
+Gemma 4 discovery is config-first: lightweight signatures route to the backend
+without importing ML runtimes, then runtime loading performs explicit
+Transformers capability checks before attempting model construction.
 
 ### Strategy pattern in prune
 
