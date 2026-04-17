@@ -14,7 +14,14 @@ from moe_surgeon.models.backend import (
     resolve_backend,
 )
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
-from moe_surgeon.models.gemma4 import DEFAULT_REGISTRY_PRIORITY, Gemma4Backend, default_registry_entry
+from moe_surgeon.models.gemma4 import (
+    DEFAULT_REGISTRY_PRIORITY,
+    GEMMA4_MIN_TRANSFORMERS_VERSION,
+    GEMMA4_SUPPORT_ADDED_ON,
+    Gemma4Backend,
+    default_registry_entry,
+    gemma4_runtime_guidance,
+)
 from moe_surgeon.schemas import ModelHandle
 
 
@@ -71,6 +78,21 @@ def _bundle(*, config: dict[str, object], state_dict: dict[str, FakeTensor]) -> 
         config=config,
         metadata={"state_dict": state_dict, "backend_version": "1.0.0"},
     )
+
+
+def _assert_runtime_contract_diagnostics(
+    error: UnsupportedModelError,
+    *,
+    installed_version: str,
+    required_symbol: str = "Gemma4ForConditionalGeneration",
+) -> None:
+    message = str(error)
+    assert f"installed_transformers_version={installed_version}" in message
+    assert f"minimum_transformers_version={GEMMA4_MIN_TRANSFORMERS_VERSION}" in message
+    assert f"required_symbol={required_symbol}" in message
+    assert f"support_added_on={GEMMA4_SUPPORT_ADDED_ON}" in message
+    assert f"guidance={gemma4_runtime_guidance(installed_version)}" in message
+    assert "source=google/gemma-4-27b" in message
 
 
 def test_gemma4_module_import_is_lightweight_in_fresh_process() -> None:
@@ -377,11 +399,7 @@ def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_mis
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
         backend.load(signature)
 
-    message = str(exc_info.value)
-    assert "installed_transformers_version=5.5.4" in message
-    assert "minimum_transformers_version=5.5.0" in message
-    assert "required_symbol=Gemma4ForConditionalGeneration" in message
-    assert "support_added_on=2026-04-01" in message
+    _assert_runtime_contract_diagnostics(exc_info.value, installed_version="5.5.4")
 
 
 def test_gemma4_backend_load_rejects_transformers_below_minimum_support_floor(
@@ -420,11 +438,7 @@ def test_gemma4_backend_load_rejects_transformers_below_minimum_support_floor(
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
         backend.load(signature, dtype="float32")
 
-    message = str(exc_info.value)
-    assert "installed_transformers_version=5.4.9" in message
-    assert "minimum_transformers_version=5.5.0" in message
-    assert "required_symbol=Gemma4ForConditionalGeneration" in message
-    assert "support_added_on=2026-04-01" in message
+    _assert_runtime_contract_diagnostics(exc_info.value, installed_version="5.4.9")
 
 
 def test_default_registry_resolves_gemma4_backend_from_mapping_and_signature() -> None:
