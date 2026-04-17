@@ -1,7 +1,26 @@
 {
-  "tasks": {},
+  "tasks": {
+    "57137f8c-cd70-4af8-aa64-bfb3aba87982": {
+      "attempts": [
+        {
+          "approach": "[Add Gemma4 backend class and model loading checks]: **Execution Summary**\n\nSubtask status:\n1. Done\n2. Done\n3. Done\n\nImplemented the Gemma 4 backend in [src/moe_surgeon/models/gemma4.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py), added lazy default registry helpers in [src/",
+          "success": false,
+          "error": "Hybrid topology validation is incomplete: [src/moe_surgeon/models/gemma4.py:29](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py:29) and [src/moe_surgeon/models/gemma4.py:660](/home/",
+          "verifyConfidence": 95,
+          "issues": [
+            "Hybrid topology validation is incomplete: [src/moe_surgeon/models/gemma4.py:29](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py:29) and [src/moe_surgeon/models/gemma4.py:660](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py:660) only require the five MoE key families, so `validate_bundle()` accepts a layer with no dense `mlp.*` or feedforward-norm tensors. I reproduced this locally with a synthetic bundle (`validate_bundle_without_dense_keys: PASSED`). Upstream Gemma4 weight maps show dense and MoE tensors coexisting in each decoder layer: https://huggingface.co/google/gemma-4-26B-A4B/blob/main/model.safetensors.index.json . This misses the roadmap/PM requirement to validate Gemma4's dense+MoE hybrid invariants and reject incomplete hybrid checkpoints.",
+            "Expert tensor shape validation is too weak: [src/moe_surgeon/models/gemma4.py:791](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/gemma4.py:791) only checks rank `>= 2`, expert axis, and that `hidden_size` appears somewhere after axis 0. A malformed expert pair with shapes `(128, 999, 2816)` and `(128, 2816, 999)` passes `extract_expert_state()` in local verification even though upstream Gemma4 config declares `moe_intermediate_size=704`: https://huggingface.co/google/gemma-4-26B-A4B/blob/main/config.json . The backend should enforce exact Gemma4 expert tensor layouts and intermediate-size invariants with actionable errors.",
+            "Regression coverage does not cover the missing acceptance cases: [tests/test_models_gemma4.py:47](/home/netsky/dev/labs/moe-surgeon/tests/test_models_gemma4.py:47) constructs fake layers with only router/expert keys, and [tests/test_models_gemma4.py:193](/home/netsky/dev/labs/moe-surgeon/tests/test_models_gemma4.py:193) only exercises expert-axis mismatch. Add offline tests proving `validate_bundle()` fails on missing dense hybrid keys and that wrong `moe_intermediate_size` / unexpected expert tensor ranks fail fast with detailed domain errors."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T05:36:32.006Z"
+        }
+      ],
+      "stuckSince": null
+    }
+  },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T05:11:35.664Z"
+    "lastUpdated": "2026-04-17T05:36:32.006Z"
   }
 }
