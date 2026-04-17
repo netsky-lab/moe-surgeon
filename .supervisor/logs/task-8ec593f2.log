@@ -1,0 +1,2 @@
+{"timestamp":"2026-04-17T08:53:27.597Z","phase":"execution","level":"info","message":"Phase started: execution — Add a CLI version smoke test"}
+{"timestamp":"2026-04-17T08:56:14.335Z","phase":"execution","level":"info","message":"Phase ended: execution (success) — Metrics: 3/3 passed"}

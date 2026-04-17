@@ -2,6 +2,7 @@ README.md
 pyproject.toml
 src/moe_surgeon/__init__.py
 src/moe_surgeon/__main__.py
+src/moe_surgeon/repo_metrics.py
 src/moe_surgeon/schemas.py
 src/moe_surgeon.egg-info/PKG-INFO
 src/moe_surgeon.egg-info/SOURCES.txt
@@ -23,4 +24,5 @@ src/moe_surgeon/runtime/__init__.py
 tests/test_cli.py
 tests/test_models_gemma4.py
 tests/test_models_registry.py
+tests/test_repo_metrics.py
 tests/test_schemas.py
