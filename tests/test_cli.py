@@ -4,6 +4,7 @@ import subprocess
 import sys
 
 from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
+from moe_surgeon.__main__ import main as module_main
 from moe_surgeon.cli.main import cli
 
 
@@ -45,6 +46,22 @@ def test_module_help_lists_placeholder_subcommands() -> None:
     assert "export" in result.stdout
 
 
+def test_module_main_wrapper_runs_click_group_help() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "from moe_surgeon.__main__ import main; main()", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "Usage: python -m moe_surgeon" in result.stdout
+    assert "scan" in result.stdout
+    assert "bench" in result.stdout
+    assert "prune" in result.stdout
+    assert "export" in result.stdout
+
+
 def test_cli_help_does_not_import_heavy_dependencies() -> None:
     probe = """
 import sys
@@ -64,3 +81,7 @@ assert not forbidden, forbidden
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
+
+
+def test_module_main_is_importable() -> None:
+    assert callable(module_main)

@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from moe_surgeon.cli.main import main
+from moe_surgeon.cli.main import main as cli_main
 
 
-def run() -> None:
-    """Invoke the Click application for module execution."""
+def main() -> None:
+    """Invoke the lightweight Click application for module execution."""
 
-    main(prog_name="python -m moe_surgeon")
+    cli_main(prog_name="python -m moe_surgeon")
 
 
 if __name__ == "__main__":
-    run()
+    main()

@@ -18,6 +18,8 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Hardened the executable module entrypoint in `src/moe_surgeon/__main__.py` by exposing a stable module-level `main()` wrapper that delegates to the lightweight Click bootstrap with the canonical `python -m moe_surgeon` program name.
+- Added CLI regression coverage in `tests/test_cli.py` for importing the module entrypoint directly and invoking its help path without pulling in heavy runtime dependencies.
 - Completed P2 package bootstrap wiring in `pyproject.toml`, `src/moe_surgeon/cli/main.py`, and `src/moe_surgeon/__main__.py` with an installable `moe-surgeon` script, module execution support, and placeholder Click subcommands (`scan`, `bench`, `prune`, `export`).
 - Added CLI regression tests in `tests/test_cli.py` covering `python -m moe_surgeon --help` and a lightweight help path that avoids importing `torch`, `transformers`, and `safetensors`.
 - Updated README and architecture notes to document the lightweight bootstrap CLI behavior and entrypoint usage.
