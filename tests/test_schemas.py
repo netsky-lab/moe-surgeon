@@ -16,6 +16,7 @@ from moe_surgeon.schemas import (
     SchemaValidationError,
     to_json,
     from_json,
+    sort_activation_stats,
     sort_experts,
     validate_shape_tuple,
     validate_layer_ref,
@@ -180,6 +181,35 @@ def test_model_and_activation_objects_validate_bounds() -> None:
     )
     sorted_candidates = sort_experts([candidate, candidate])
     assert len(sorted_candidates) == 2
+
+
+def test_sort_activation_stats_is_deterministic_by_layer_and_expert() -> None:
+    ordered = sort_activation_stats(
+        [
+            ActivationStats(
+                layer_index=2,
+                expert_index=1,
+                token_count=1,
+                weighted_token_count=0.1,
+                mass_sum=0.1,
+                mean_weight=0.1,
+                entropy=0.0,
+                n_tokens=1,
+            ),
+            ActivationStats(
+                layer_index=1,
+                expert_index=3,
+                token_count=9,
+                weighted_token_count=0.9,
+                mass_sum=0.9,
+                mean_weight=0.1,
+                entropy=0.0,
+                n_tokens=9,
+            ),
+        ]
+    )
+
+    assert [(item.layer_index, item.expert_index) for item in ordered] == [(1, 3), (2, 1)]
 
 
 def test_deterministic_default_json_for_default_plan_instances() -> None:

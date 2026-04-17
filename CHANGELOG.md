@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- Added offline-safe runtime profiling utilities in
+  `src/moe_surgeon/runtime/profiler.py` and `src/moe_surgeon/runtime/bench.py`,
+  including context-managed router hook attach/detach, backend-driven router
+  module resolution, mask-aware activation aggregation, and deterministic bench
+  artifact manifest generation keyed by prompt/config digests instead of
+  timestamps.
+- Exported runtime profiler entrypoints from `src/moe_surgeon/runtime/__init__.py`
+  and added activation/topology ordering helpers in
+  `src/moe_surgeon/analysis/scan.py`.
+- Extended the lightweight CLI `bench` placeholder with prompt batching and
+  profiler-option parsing in `src/moe_surgeon/cli/main.py`.
+- Extended `src/moe_surgeon/runtime/profiler.py` with deterministic prompt
+  batching helpers so bench flows can derive canonical attention-mask-aware
+  prompt batches without requiring live Gemma4 inference.
+- Tightened runtime activation aggregation to persist both unweighted
+  active-token totals (`n_tokens`) and weighted layer totals
+  (`weighted_n_tokens`) while continuing to mask out padding and
+  sequence-prefix positions.
+- Hardened `src/moe_surgeon/analysis/scan.py` validation so activation payloads
+  fail fast when per-layer weighted or unweighted totals disagree across
+  experts.
+- Updated the bench CLI placeholder to count newline-delimited prompt files
+  consistently with prompt batching.
+- Added offline regression coverage for prompt batching, weighted layer totals,
+  and scan-layer total consistency.
+- Added offline regression coverage in `tests/test_runtime_profiler.py`,
+  `tests/test_analysis_scan.py`, `tests/test_models_gemma4.py`, `tests/test_cli.py`,
+  and `tests/test_schemas.py` for hook cleanup, aggregation semantics, topology
+  alignment, deterministic manifest generation, and bench CLI option handling.
 - Extended `tests/test_repo_metrics.py` with explicit missing-check regression
   coverage for absent `lintCommand` and `typeCheckCommand`, asserting
   `python -m moe_surgeon.repo_metrics --check <name>` fails with the named
@@ -61,6 +90,15 @@
 
 - Hardened `src/moe_surgeon/models/gemma4.py` to require Gemma4 hybrid decoder-layer companion tensors (`mlp.*` and feedforward norms) alongside router/expert tensors during topology validation and to enforce exact expert tensor layouts from `moe_intermediate_size`.
 - Extended `tests/test_models_gemma4.py` so synthetic Gemma4 layers model the published hybrid topology and regressions cover missing dense hybrid keys, wrong `moe_intermediate_size`, and invalid expert tensor rank failures.
+
+## 2026-04-17
+- Extended `src/moe_surgeon/runtime/profiler.py` benchmark artifact output with
+  explicit canonical `profiler_config` payloads, stable prompt/input checksum
+  tracking, and direct JSON serialization helpers for deterministic bench
+  artifacts that stay aligned with topology/activation ordering.
+- Expanded `tests/test_runtime_profiler.py` with regression coverage for
+  input-payload hashing, profiler-config hashing, and canonical JSON artifact
+  writing.
 
 ## 2026-04-17
 - Registered the Gemma4 backend through a canonical default-registry entry in

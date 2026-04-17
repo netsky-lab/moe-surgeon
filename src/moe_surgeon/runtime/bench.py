@@ -1,4 +1,4 @@
-"""Runtime package for forward hook profiling and prompt tracing."""
+"""Compatibility wrapper for runtime benchmark profiling."""
 
 from moe_surgeon.runtime.profiler import (
     benchmark,

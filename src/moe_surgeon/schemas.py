@@ -612,6 +612,7 @@ class ActivationStats(_SchemaBase):
     mean_weight: float
     entropy: float
     n_tokens: int
+    weighted_n_tokens: Optional[float] = None
     timestamp_span: Optional[str] = None
     top1_mass: Optional[float] = None
     density: Optional[float] = None
@@ -635,6 +636,10 @@ class ActivationStats(_SchemaBase):
             raise SchemaValidationError("mean_weight must be >= 0")
         if self.entropy < 0:
             raise SchemaValidationError("entropy must be >= 0")
+        if self.weighted_n_tokens is not None:
+            self.weighted_n_tokens = _ensure_float(self.weighted_n_tokens, name="weighted_n_tokens")
+            if self.weighted_n_tokens < 0:
+                raise SchemaValidationError("weighted_n_tokens must be >= 0")
         if self.top1_mass is not None:
             self.top1_mass = _ensure_float(self.top1_mass, name="top1_mass")
         if self.density is not None:
@@ -642,6 +647,8 @@ class ActivationStats(_SchemaBase):
         self.metadata = _canonicalize_metadata(self.metadata)
         if self.n_tokens < self.token_count:
             raise SchemaValidationError("n_tokens must be >= token_count")
+        if self.weighted_n_tokens is not None and self.weighted_n_tokens + CANONICAL_FLOAT_EPSILON < self.weighted_token_count:
+            raise SchemaValidationError("weighted_n_tokens must be >= weighted_token_count")
 
     @property
     def occupancy(self) -> float:
@@ -1010,6 +1017,23 @@ def sort_plan_items(items: Iterable[PrunePlanItem]) -> Tuple[PrunePlanItem, ...]
     )
 
 
+def sort_activation_stats(items: Iterable[ActivationStats]) -> tuple[ActivationStats, ...]:
+    """Sort activation stats deterministically by layer and expert index."""
+
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                item.layer_index,
+                item.expert_index,
+                -item.token_count,
+                -_sort_bucket(item.weighted_token_count, epsilon=CANONICAL_FLOAT_EPSILON),
+                -_sort_bucket(item.mass_sum, epsilon=CANONICAL_FLOAT_EPSILON),
+            ),
+        )
+    )
+
+
 def sort_topology(
     layers: Iterable[LayerTopology], *, with_ref_fallback: bool = True
 ) -> Tuple[LayerTopology, ...]:
@@ -1123,6 +1147,7 @@ __all__ = [
     "TopologyMismatchError",
     "LayerReferenceError",
     "sort_experts",
+    "sort_activation_stats",
     "sort_plan_items",
     "sort_topology",
     "to_dict",

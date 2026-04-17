@@ -167,3 +167,33 @@ def test_cli_version_commands_are_lightweight(
         )
     ]
     assert not forbidden, forbidden
+
+
+def test_bench_command_accepts_prompt_batching_options() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from moe_surgeon.cli.main import main; main()",
+            "bench",
+            "--prompt",
+            "alpha",
+            "--prompt",
+            "beta",
+            "--batch-size",
+            "2",
+            "--seed",
+            "7",
+            "--capture-router-scores",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "prompt_inputs=2" in result.stdout
+    assert "prompt_batches=1" in result.stdout
+    assert "batch_size=2" in result.stdout
+    assert "seed=7" in result.stdout
+    assert "capture_router_scores=true" in result.stdout

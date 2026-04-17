@@ -11,6 +11,7 @@ src/moe_surgeon.egg-info/entry_points.txt
 src/moe_surgeon.egg-info/requires.txt
 src/moe_surgeon.egg-info/top_level.txt
 src/moe_surgeon/analysis/__init__.py
+src/moe_surgeon/analysis/scan.py
 src/moe_surgeon/cli/__init__.py
 src/moe_surgeon/cli/main.py
 src/moe_surgeon/export/__init__.py
@@ -21,8 +22,12 @@ src/moe_surgeon/models/gemma4.py
 src/moe_surgeon/models/registry.py
 src/moe_surgeon/prune/__init__.py
 src/moe_surgeon/runtime/__init__.py
+src/moe_surgeon/runtime/bench.py
+src/moe_surgeon/runtime/profiler.py
+tests/test_analysis_scan.py
 tests/test_cli.py
 tests/test_models_gemma4.py
 tests/test_models_registry.py
 tests/test_repo_metrics.py
+tests/test_runtime_profiler.py
 tests/test_schemas.py

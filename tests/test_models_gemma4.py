@@ -211,6 +211,30 @@ def test_gemma4_backend_router_and_expert_state_validate_shapes() -> None:
     backend.validate_layer(bundle, layer=layer, router_state=router_state)
 
 
+def test_gemma4_backend_resolves_runtime_router_module_from_topology() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    model = SimpleNamespace(
+        model=SimpleNamespace(
+            language_model=SimpleNamespace(
+                layers=[SimpleNamespace(router=SimpleNamespace(register_forward_hook=lambda hook: None))]
+            )
+        )
+    )
+    bundle = LoadedBackendBundle(
+        backend_name="gemma4",
+        model_handle=ModelHandle(model_id="google/gemma-4-27b", revision="rev-123", backend_name="gemma4"),
+        model=model,
+        config=config,
+        metadata={"state_dict": _layer_state(0), "backend_version": "1.0.0"},
+    )
+
+    layer = backend.extract_topology(bundle)[0]
+    resolved = backend.resolve_router_module(bundle, layer=layer)
+
+    assert resolved is model.model.language_model.layers[0].router
+
+
 def test_gemma4_backend_expert_shape_mismatch_raises_shape_invariant_error() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[0])
