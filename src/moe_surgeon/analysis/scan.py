@@ -1,0 +1,187 @@
+"""Static router scan built on backend-exposed topology and router metadata."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Mapping
+
+import torch
+
+from moe_surgeon.analysis.metrics import RouterMetricSummary, build_expert_stats
+from moe_surgeon.models.backend import LoadedBackendBundle, ModelBackend, resolve_backend
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from moe_surgeon.schemas import ExpertStats, LayerTopology, RouterState, RunArtifactManifest, sort_topology
+
+
+@dataclass(frozen=True)
+class StaticScanResult:
+    """Deterministic static scan payload for one loaded MoE model bundle."""
+
+    layers: tuple[LayerTopology, ...]
+    router_states: tuple[RouterState, ...]
+    expert_stats: tuple[ExpertStats, ...]
+    layer_summaries: tuple[RouterMetricSummary, ...]
+    manifest: RunArtifactManifest
+
+
+def _resolve_scan_backend(
+    bundle: LoadedBackendBundle,
+    *,
+    backend: ModelBackend | None,
+) -> ModelBackend:
+    if backend is not None:
+        return backend
+    return resolve_backend(bundle.config, model_id=bundle.model_handle.model_id)
+
+
+def _materialized_state_dict(bundle: LoadedBackendBundle) -> Mapping[str, object]:
+    metadata_state = bundle.metadata.get("state_dict")
+    if isinstance(metadata_state, Mapping):
+        return metadata_state
+
+    state_dict = getattr(bundle.model, "state_dict", None)
+    if callable(state_dict):
+        loaded_state = state_dict()
+        if isinstance(loaded_state, Mapping):
+            return loaded_state
+
+    if "state_keys" in bundle.metadata:
+        raise TopologyMismatchError(
+            "static scan requires materialized numeric tensors, not topology-only state_keys metadata",
+            model_id=bundle.model_handle.model_id,
+        )
+
+    raise TopologyMismatchError(
+        "static scan requires materialized state_dict tensor values",
+        model_id=bundle.model_handle.model_id,
+    )
+
+
+def _require_tensor(
+    state_dict: Mapping[str, object],
+    *,
+    bundle: LoadedBackendBundle,
+    layer: LayerTopology,
+    tensor_role: str,
+) -> torch.Tensor:
+    tensor_key = layer.module_paths.get(tensor_role)
+    if tensor_key is None:
+        raise TopologyMismatchError(
+            "layer module_paths missing required router tensor",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            details={"tensor_role": tensor_role},
+        )
+    value = state_dict.get(tensor_key)
+    if value is None:
+        raise TopologyMismatchError(
+            "static scan requires materialized numeric tensor values",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            details={"tensor_role": tensor_role},
+        )
+    if not isinstance(value, torch.Tensor):
+        raise ShapeInvariantViolationError(
+            "scan router tensor must be torch.Tensor",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            details={"tensor_role": tensor_role, "value_type": type(value).__name__},
+        )
+    return value
+
+
+def _enrich_router_state(
+    router_state: RouterState,
+    *,
+    route_scale: torch.Tensor,
+    per_expert_scale: torch.Tensor,
+) -> RouterState:
+    metadata = dict(router_state.metadata)
+    if route_scale.numel() == 1:
+        metadata["route_scale_value"] = float(route_scale.detach().to(dtype=torch.float64).item())
+    metadata["per_expert_scale_mean_abs"] = float(
+        per_expert_scale.detach().to(dtype=torch.float64).abs().mean().item()
+    )
+    return RouterState(
+        layer_index=router_state.layer_index,
+        num_experts=router_state.num_experts,
+        top_k=router_state.top_k,
+        logits_shape=router_state.logits_shape,
+        top_k_indices_shape=router_state.top_k_indices_shape,
+        top_k_weights_shape=router_state.top_k_weights_shape,
+        projection_shape=router_state.projection_shape,
+        per_expert_scale_shape=router_state.per_expert_scale_shape,
+        has_router_probabilities=router_state.has_router_probabilities,
+        has_raw_logits_capture=router_state.has_raw_logits_capture,
+        route_scale_present=router_state.route_scale_present,
+        metadata=metadata,
+    )
+
+
+def scan_model(
+    bundle: LoadedBackendBundle,
+    *,
+    backend: ModelBackend | None = None,
+) -> StaticScanResult:
+    """Scan static router weights for all backend-validated MoE layers."""
+
+    active_backend = _resolve_scan_backend(bundle, backend=backend)
+    layers = sort_topology(active_backend.extract_topology(bundle))
+    state_dict = _materialized_state_dict(bundle)
+
+    router_states: list[RouterState] = []
+    expert_stats: list[ExpertStats] = []
+    layer_summaries: list[RouterMetricSummary] = []
+    for layer in layers:
+        router_state = active_backend.extract_router_state(bundle, layer=layer)
+        active_backend.validate_layer(bundle, layer=layer, router_state=router_state)
+
+        router_proj_weight = _require_tensor(state_dict, bundle=bundle, layer=layer, tensor_role="router_proj")
+        route_scale = _require_tensor(state_dict, bundle=bundle, layer=layer, tensor_role="router_scale")
+        per_expert_scale = _require_tensor(
+            state_dict,
+            bundle=bundle,
+            layer=layer,
+            tensor_role="router_per_expert_scale",
+        )
+        router_state = _enrich_router_state(
+            router_state,
+            route_scale=route_scale,
+            per_expert_scale=per_expert_scale,
+        )
+
+        layer_stats, layer_summary = build_expert_stats(
+            layer_index=layer.layer_index,
+            router_proj_weight=router_proj_weight,
+            top_k=layer.top_k,
+            per_expert_scale=per_expert_scale,
+        )
+        router_states.append(router_state)
+        expert_stats.extend(layer_stats)
+        layer_summaries.append(layer_summary)
+
+    manifest = RunArtifactManifest(
+        run_id=f"scan-static-{bundle.model_handle.model_fingerprint[:12]}",
+        command="scan",
+        model_handle=bundle.model_handle,
+        top_k=layers[0].top_k if layers else 1,
+        prompt_count=0,
+        seed=bundle.model_handle.seed,
+        metadata={
+            "moe_layer_count": len(layers),
+            "expert_stat_count": len(expert_stats),
+            "backend_name": bundle.backend_name,
+        },
+    )
+    return StaticScanResult(
+        layers=layers,
+        router_states=tuple(router_states),
+        expert_stats=tuple(expert_stats),
+        layer_summaries=tuple(layer_summaries),
+        manifest=manifest,
+    )
+
+
+__all__ = ["StaticScanResult", "scan_model"]
