@@ -134,5 +134,13 @@
       "add-explicit-missing-symbol-live-gate-regression"
     ],
     "timestamp": "2026-04-17T15:17:18.620Z"
+  },
+  {
+    "taskTitle": "Align declared Transformers dependency floor with Gemma4 runtime support contract",
+    "summary": "**What Changed**\n\nUpdated regression coverage so the Gemma4 runtime floor is now checked against both source and generated packaging metadata, not just `pyproject.toml`.\n\nModified:\n- [tests/test_models_gemma4.py](/home/netsky/dev/labs/moe-surgeon/tests/test_models_gemma4.py)\n- [CHANGELOG.md](/home/n",
+    "tags": [
+      "align-declared-transformers-dependency-floor-with-gemma4-runtime-support-contract"
+    ],
+    "timestamp": "2026-04-17T15:38:58.099Z"
   }
 ]
