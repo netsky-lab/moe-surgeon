@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 from moe_surgeon.models.backend import LoadedBackendBundle
-from moe_surgeon.models.errors import ShapeInvariantViolationError
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 
@@ -15,6 +16,12 @@ from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 @dataclass
 class FakeTensor:
     shape: tuple[int, ...]
+    data: object | None = None
+
+    def tolist(self) -> object:
+        if self.data is None:
+            raise AssertionError("test tensor missing list data")
+        return self.data
 
 
 @dataclass
@@ -143,6 +150,42 @@ def test_router_activation_profiler_collects_outputs_and_detaches_hooks() -> Non
     assert all(not module.hooks for module in modules.values())
 
 
+def test_router_activation_profiler_normalizes_gemma4_tuple_output_order() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(
+        backend=backend,
+        bundle=_bundle(),
+        topology=(layer,),
+        include_router_scores=True,
+    ) as profiler:
+        module.run(
+            (
+                FakeTensor(shape=(2, 4)),
+                FakeTensor(shape=(2, 2), data=[[0.7, 0.3], [0.6, 0.4]]),
+                FakeTensor(shape=(2, 2), data=[[1, 3], [0, 2]]),
+            )
+        )
+
+        assert len(profiler.records) == 1
+        record = profiler.records[0]
+        assert record.layer_index == 0
+        assert record.router_scores is not None
+        assert cast(FakeTensor, record.router_scores).shape == (2, 4)
+        assert cast(FakeTensor, record.top_k_weights).shape == (2, 2)
+        assert cast(FakeTensor, record.top_k_indices).shape == (2, 2)
+
+        stats = profiler.accumulate(attention_mask=[1, 1])
+
+    by_expert = {item.expert_index: item for item in stats if item.layer_index == 0}
+    assert by_expert[0].token_count == 1
+    assert by_expert[1].token_count == 1
+    assert by_expert[2].token_count == 1
+    assert by_expert[3].token_count == 1
+
+
 def test_router_activation_profiler_detaches_hooks_after_failure() -> None:
     layer = _layer(0)
     module = FakeRouterModule(name="layer-0")
@@ -172,6 +215,71 @@ def test_router_activation_profiler_rejects_invalid_top_k_output_shape() -> None
             )
 
         assert profiler.attached
+
+
+def test_router_activation_profiler_accepts_sequence_output_without_optional_scores() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)) as profiler:
+        module.run(
+            (
+                [[0.7, 0.3], [0.6, 0.4]],
+                [[0, 1], [2, 3]],
+            )
+        )
+        stats = profiler.accumulate(attention_mask=[1, 1])
+
+    by_expert = {item.expert_index: item for item in stats if item.layer_index == 0}
+    assert by_expert[0].token_count == 1
+    assert by_expert[1].token_count == 1
+    assert by_expert[2].token_count == 1
+    assert by_expert[3].token_count == 1
+
+
+def test_router_activation_profiler_rejects_missing_requested_router_scores() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(
+        backend=backend,
+        bundle=_bundle(),
+        topology=(layer,),
+        include_router_scores=True,
+    ):
+        with pytest.raises(
+            ShapeInvariantViolationError,
+            match=r"router scores capture requested but not present in router output \(model_id=fake-model, layer_index=0\)",
+        ):
+            module.run(([[0.7, 0.3]], [[0, 1]]))
+
+
+def test_router_activation_profiler_reports_tuple_length_diagnostics() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)):
+        with pytest.raises(
+            ShapeInvariantViolationError,
+            match=r"router forward output sequence must contain 2 or 3 items \(model_id=fake-model, layer_index=0, output_type=tuple, sequence_length=1\)",
+        ):
+            module.run(([[0, 1]],))
+
+
+def test_router_activation_profiler_reports_invalid_output_container_diagnostics() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)):
+        with pytest.raises(
+            ShapeInvariantViolationError,
+            match=r"router forward output must be mapping, object, or sequence \(model_id=fake-model, layer_index=0, output_type=int\)",
+        ):
+            module.run(7)
 
 
 def test_router_activation_profiler_aggregates_with_padding_mask() -> None:
@@ -206,6 +314,29 @@ def test_router_activation_profiler_aggregates_with_padding_mask() -> None:
     assert all(item.n_tokens == 3 for item in by_expert.values())
 
 
+def test_router_activation_profiler_accumulates_repeated_runs_deterministically() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)) as profiler:
+        for _ in range(2):
+            module.run(
+                {
+                    "top_k_indices": [[[0, 1]]],
+                    "top_k_weights": [[[0.6, 0.4]]],
+                }
+            )
+            profiler.accumulate(attention_mask=[[1]])
+
+    by_expert = {item.expert_index: item for item in profiler.activation_stats() if item.layer_index == 0}
+    assert by_expert[0].token_count == 2
+    assert by_expert[1].token_count == 2
+    assert by_expert[0].weighted_token_count == pytest.approx(1.2)
+    assert by_expert[1].weighted_token_count == pytest.approx(0.8)
+    assert all(item.n_tokens == 2 for item in by_expert.values())
+
+
 def test_router_activation_profiler_aligns_generation_step_to_mask_tail() -> None:
     layer = _layer(0)
     module = FakeRouterModule(name="layer-0")
@@ -234,6 +365,25 @@ def test_router_activation_profiler_aligns_generation_step_to_mask_tail() -> Non
     assert by_expert[1].token_count == 1
     assert by_expert[2].token_count == 0
     assert by_expert[3].token_count == 0
+
+
+def test_router_activation_profiler_rejects_out_of_range_expert_indices() -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)) as profiler:
+        module.run(
+            {
+                "top_k_indices": [[[0, 4]]],
+                "top_k_weights": [[[0.6, 0.4]]],
+            }
+        )
+        with pytest.raises(
+            TopologyMismatchError,
+            match=r"captured expert index is out of range \(model_id=fake-model, layer_index=0, expert_count=4, expert_index=4\)",
+        ):
+            profiler.accumulate(attention_mask=[[1]])
 
 
 def test_benchmark_builds_deterministic_manifest_and_sorted_stats() -> None:

@@ -239,7 +239,7 @@ class RouterActivationProfiler:
             if router_state is None:
                 router_state = self._backend.extract_router_state(self._bundle, layer=layer)
                 self._router_states[record.layer_index] = router_state
-            output_shape = self._shape_tuple(record.top_k_indices, allow_scalar=False)[:-1]
+            output_shape = self._shape_tuple(record.top_k_indices, allow_scalar=False, layer=layer)[:-1]
             active_mask = self._resolve_active_mask(
                 attention_mask=attention_mask,
                 position_mask=position_mask,
@@ -346,11 +346,11 @@ class RouterActivationProfiler:
         router_state: RouterState,
         output: object,
     ) -> RouterActivationRecord:
-        values = self._coerce_output_mapping(output)
+        values = self._coerce_output_mapping(output, layer=layer)
         top_k_indices = self._require_output_value(
             values,
             field_name="top_k_indices",
-            aliases=("top_k_indices", "topk_indices", "expert_indices", "indices"),
+            aliases=("top_k_indices", "top_k_index", "topk_indices", "expert_indices", "indices"),
             layer=layer,
         )
         top_k_weights = self._require_output_value(
@@ -361,7 +361,7 @@ class RouterActivationProfiler:
         )
         router_scores = self._optional_output_value(
             values,
-            aliases=("router_scores", "scores", "logits", "router_logits"),
+            aliases=("router_scores", "router_probabilities", "scores", "logits", "router_logits"),
         )
         self._validate_capture_shape(
             value=top_k_indices,
@@ -406,7 +406,7 @@ class RouterActivationProfiler:
             metadata={"layer_name": layer.layer_name},
         )
 
-    def _coerce_output_mapping(self, output: object) -> Mapping[str, object]:
+    def _coerce_output_mapping(self, output: object, *, layer: LayerTopology) -> Mapping[str, object]:
         if isinstance(output, Mapping):
             return {str(key): value for key, value in output.items()}
         if hasattr(output, "__dict__"):
@@ -418,16 +418,25 @@ class RouterActivationProfiler:
         if isinstance(output, Sequence) and not isinstance(output, (str, bytes)):
             sequence_output = list(output)
             if len(sequence_output) < 2 or len(sequence_output) > 3:
-                raise ShapeInvariantViolationError("router forward output sequence must contain 2 or 3 items")
-            mapping: dict[str, object] = {
-                "top_k_indices": sequence_output[0],
-                "top_k_weights": sequence_output[1],
-            }
+                raise ShapeInvariantViolationError(
+                    "router forward output sequence must contain 2 or 3 items",
+                    model_id=self._bundle.model_handle.model_id,
+                    layer_index=layer.layer_index,
+                    details={"sequence_length": len(sequence_output), "output_type": type(output).__name__},
+                )
+            mapping: dict[str, object] = {"top_k_weights": sequence_output[0], "top_k_indices": sequence_output[1]}
             if len(sequence_output) == 3:
-                mapping["router_scores"] = sequence_output[2]
+                mapping = {
+                    "router_scores": sequence_output[0],
+                    "top_k_weights": sequence_output[1],
+                    "top_k_indices": sequence_output[2],
+                }
             return mapping
         raise ShapeInvariantViolationError(
             "router forward output must be mapping, object, or sequence",
+            model_id=self._bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            details={"output_type": type(output).__name__},
         )
 
     def _require_output_value(
@@ -463,7 +472,7 @@ class RouterActivationProfiler:
         layer: LayerTopology,
         allow_scalar: bool,
     ) -> None:
-        shape = self._shape_tuple(value, allow_scalar=allow_scalar)
+        shape = self._shape_tuple(value, allow_scalar=allow_scalar, layer=layer)
         if not shape:
             raise ShapeInvariantViolationError(
                 f"{field_name} shape cannot be empty",
@@ -479,23 +488,42 @@ class RouterActivationProfiler:
                 actual_shape=shape,
             )
 
-    def _shape_tuple(self, value: object, *, allow_scalar: bool) -> tuple[int, ...]:
+    def _shape_tuple(self, value: object, *, allow_scalar: bool, layer: LayerTopology) -> tuple[int, ...]:
         shape = getattr(value, "shape", None)
         if shape is None:
             if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-                normalized = self._infer_nested_shape(self._to_python_nested(value))
+                normalized = self._infer_nested_shape(self._to_python_nested(value), layer=layer)
             else:
-                raise ShapeInvariantViolationError("captured router tensor must expose shape")
+                raise ShapeInvariantViolationError(
+                    "captured router tensor must expose shape",
+                    model_id=self._bundle.model_handle.model_id,
+                    layer_index=layer.layer_index,
+                    details={"value_type": type(value).__name__},
+                )
         elif isinstance(shape, tuple):
             normalized = tuple(int(item) for item in shape)
         elif isinstance(shape, Sequence) and not isinstance(shape, (str, bytes)):
             normalized = tuple(int(item) for item in shape)
         else:
-            raise ShapeInvariantViolationError("captured router tensor shape must be sequence")
+            raise ShapeInvariantViolationError(
+                "captured router tensor shape must be sequence",
+                model_id=self._bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                details={"shape_type": type(shape).__name__},
+            )
         if not allow_scalar and len(normalized) == 0:
-            raise ShapeInvariantViolationError("captured router tensor shape cannot be scalar")
+            raise ShapeInvariantViolationError(
+                "captured router tensor shape cannot be scalar",
+                model_id=self._bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+            )
         if any(item < 0 for item in normalized):
-            raise ShapeInvariantViolationError("captured router tensor shape dimensions must be non-negative")
+            raise ShapeInvariantViolationError(
+                "captured router tensor shape dimensions must be non-negative",
+                model_id=self._bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                actual_shape=normalized,
+            )
         return normalized
 
     def _resolve_active_mask(
@@ -512,6 +540,7 @@ class RouterActivationProfiler:
         return self._combine_masks(
             left=mask,
             right=self._align_mask(mask=position_mask, output_shape=output_shape, layer=layer, field_name="position_mask"),
+            layer=layer,
         )
 
     def _align_mask(
@@ -523,7 +552,7 @@ class RouterActivationProfiler:
         field_name: str,
     ) -> object:
         mask_data = self._to_python_nested(mask)
-        mask_shape = self._infer_nested_shape(mask_data)
+        mask_shape = self._infer_nested_shape(mask_data, layer=layer)
         if mask_shape == output_shape:
             return mask_data
         if len(output_shape) == 2 and len(mask_shape) == 2 and mask_shape[0] == output_shape[0] and mask_shape[1] >= output_shape[1]:
@@ -540,11 +569,19 @@ class RouterActivationProfiler:
             actual_shape=mask_shape,
         )
 
-    def _combine_masks(self, *, left: object, right: object) -> object:
+    def _combine_masks(self, *, left: object, right: object, layer: LayerTopology) -> object:
         if isinstance(left, list) and isinstance(right, list):
             if len(left) != len(right):
-                raise ShapeInvariantViolationError("mask operands must have matching shapes")
-            return [self._combine_masks(left=item_left, right=item_right) for item_left, item_right in zip(left, right)]
+                raise ShapeInvariantViolationError(
+                    "mask operands must have matching shapes",
+                    model_id=self._bundle.model_handle.model_id,
+                    layer_index=layer.layer_index,
+                    details={"left_length": len(left), "right_length": len(right)},
+                )
+            return [
+                self._combine_masks(left=item_left, right=item_right, layer=layer)
+                for item_left, item_right in zip(left, right)
+            ]
         return bool(left) and bool(right)
 
     def _iter_active_positions(
@@ -642,14 +679,18 @@ class RouterActivationProfiler:
             candidate = tolist()
         return candidate
 
-    def _infer_nested_shape(self, value: object) -> tuple[int, ...]:
+    def _infer_nested_shape(self, value: object, *, layer: LayerTopology) -> tuple[int, ...]:
         if isinstance(value, list):
             if not value:
                 return (0,)
-            child_shape = self._infer_nested_shape(value[0])
+            child_shape = self._infer_nested_shape(value[0], layer=layer)
             for child in value[1:]:
-                if self._infer_nested_shape(child) != child_shape:
-                    raise ShapeInvariantViolationError("nested tensor data must be rectangular")
+                if self._infer_nested_shape(child, layer=layer) != child_shape:
+                    raise ShapeInvariantViolationError(
+                        "nested tensor data must be rectangular",
+                        model_id=self._bundle.model_handle.model_id,
+                        layer_index=layer.layer_index,
+                    )
             return (len(value), *child_shape)
         return ()
 
