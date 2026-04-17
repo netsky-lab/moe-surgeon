@@ -30,12 +30,17 @@ def _write_project_json(
     root: Path,
     *,
     include_verify_config: bool = False,
+    lint_command: str | None = None,
     typecheck_command: str | None = None,
 ) -> None:
     supervisor_dir = root / ".supervisor"
     supervisor_dir.mkdir(parents=True, exist_ok=True)
     metrics_config = {
-        "lintCommand": f'{sys.executable} -c "print(\'lint-ok\')"',
+        "lintCommand": (
+            f'{sys.executable} -c "print(\'lint-ok\')"'
+            if lint_command is None
+            else lint_command
+        ),
         "typeCheckCommand": (
             f'{sys.executable} -c "print(\'typecheck-ok\')"'
             if typecheck_command is None
@@ -208,20 +213,31 @@ def test_repo_metrics_collector_single_check_uses_same_entrypoint(tmp_path: Path
     assert payload["summary"] == {"failed": 0, "passed": 1, "total": 1}
 
 
-def test_repo_metrics_collector_single_check_fails_when_missing(tmp_path: Path) -> None:
-    _write_project_json(tmp_path, include_verify_config=True, typecheck_command=None)
+@pytest.mark.parametrize(
+    ("check_name", "config_key"),
+    [
+        ("lint", "lintCommand"),
+        ("typecheck", "typeCheckCommand"),
+    ],
+)
+def test_repo_metrics_collector_single_check_fails_when_missing(
+    tmp_path: Path,
+    check_name: str,
+    config_key: str,
+) -> None:
+    _write_project_json(tmp_path, include_verify_config=True)
     project_json = tmp_path / ".supervisor" / "project.json"
     payload = json.loads(project_json.read_text(encoding="utf-8"))
     repo_metrics_config = payload["repoMetricsConfig"]
     assert isinstance(repo_metrics_config, dict)
-    repo_metrics_config["typeCheckCommand"] = None
+    repo_metrics_config[config_key] = None
     project_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    result = _run_repo_metrics(tmp_path, "--check", "typecheck")
+    result = _run_repo_metrics(tmp_path, "--check", check_name)
 
     assert result.returncode != 0
     assert result.stdout == ""
-    assert "Requested check 'typecheck' is not configured" in result.stderr
+    assert f"Requested check '{check_name}' is not configured" in result.stderr
 
 
 def test_repo_metrics_runs_configured_lint_check(tmp_path: Path) -> None:

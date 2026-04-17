@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Extended `tests/test_repo_metrics.py` with explicit missing-check regression
+  coverage for absent `lintCommand` and `typeCheckCommand`, asserting
+  `python -m moe_surgeon.repo_metrics --check <name>` fails with the named
+  `Requested check ... is not configured` diagnostic.
 - Added CLI version smoke coverage in `tests/test_cli.py` for both
   `python -m moe_surgeon --version` and the installed `moe-surgeon --version`
   entrypoint by running each path in a fresh process and asserting the version
