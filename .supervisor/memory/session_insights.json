@@ -118,5 +118,13 @@
       "add-live-gemma4-integration-coverage"
     ],
     "timestamp": "2026-04-17T14:53:28.761Z"
+  },
+  {
+    "taskTitle": "Lock live skip diagnostics to the shared runtime contract",
+    "summary": "Changed [tests/test_runtime_profiler.py](/home/netsky/dev/labs/moe-surgeon/tests/test_runtime_profiler.py:229) so `_require_live_gemma4_runtime()` now skips with, and the test asserts, the full shared Gemma4 runtime contract: `installed_transformers_version`, `minimum_transformers_version`, `require",
+    "tags": [
+      "lock-live-skip-diagnostics-to-the-shared-runtime-contract"
+    ],
+    "timestamp": "2026-04-17T15:07:13.282Z"
   }
 ]
