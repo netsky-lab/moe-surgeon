@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from moe_surgeon.models.backend import (
-    BackendRegistry,
     BackendSignature,
     LoadedBackendBundle,
     TensorMetadata,
@@ -18,6 +19,7 @@ from moe_surgeon.models.errors import (
     TopologyMismatchError,
     UnsupportedModelError,
 )
+from moe_surgeon.models.registry import BackendRegistry
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 
 
@@ -127,6 +129,38 @@ def test_coerce_backend_signature_accepts_plain_config_mappings() -> None:
     assert signature.architecture == "Gemma4ForConditionalGeneration"
     assert signature.model_type == "gemma4"
     assert signature.source_path == "/tmp/checkpoint"
+
+
+@pytest.mark.parametrize(
+    ("module_name", "import_statement"),
+    (
+        ("moe_surgeon.models.backend", "import moe_surgeon.models.backend"),
+        ("moe_surgeon.models.registry", "import moe_surgeon.models.registry"),
+    ),
+)
+def test_model_modules_import_in_fresh_process_without_heavy_dependencies(
+    module_name: str,
+    import_statement: str,
+) -> None:
+    probe = f"""
+import sys
+
+{import_statement}
+
+forbidden = [name for name in ("torch", "transformers", "safetensors") if name in sys.modules]
+assert not forbidden, forbidden
+print("{module_name}")
+"""
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip() == module_name
 
 
 def test_registry_resolves_single_backend_deterministically() -> None:

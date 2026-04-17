@@ -1,4 +1,8 @@
-"""Backend protocol contracts for lightweight model-family adapters."""
+"""Backend protocol contracts for lightweight model-family adapters.
+
+This module intentionally stays import-light and does not import the
+registry implementation.
+"""
 
 from __future__ import annotations
 
@@ -148,10 +152,7 @@ class ModelBackend(Protocol):
         """Validate layer-level topology and routing invariants."""
 
 
-from moe_surgeon.models.registry import BackendRegistry  # noqa: E402
-
 __all__ = [
-    "BackendRegistry",
     "BackendSignatureInput",
     "BackendSignature",
     "coerce_backend_signature",
