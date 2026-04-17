@@ -57,6 +57,83 @@ def gemma4_runtime_guidance(installed_transformers_version: str | None) -> str:
     )
 
 
+def check_gemma4_runtime_support(
+    *,
+    model_id: str,
+    source: str,
+    installed_transformers_version: str | None,
+) -> tuple[Any, Any]:
+    """Validate the installed Transformers runtime and return required Gemma4 symbols."""
+
+    try:
+        transformers_module = import_module("transformers")
+    except Exception as exc:  # pragma: no cover - exercised by environment issues
+        raise UnsupportedModelError(
+            model_id,
+            available_backends=("gemma4",),
+            details={
+                "backend_name": "gemma4",
+                "reason": "transformers import failed",
+                "source": source,
+                "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+                "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+                "guidance": gemma4_runtime_guidance(installed_transformers_version),
+            },
+        ) from exc
+
+    if not _gemma4_meets_minimum_transformers_version(installed_transformers_version):
+        raise UnsupportedModelError(
+            model_id,
+            available_backends=("gemma4",),
+            details=_gemma4_runtime_support_details(
+                source=source,
+                transformers_version=installed_transformers_version,
+                required_symbol=_SUPPORTED_ARCHITECTURE,
+            ),
+        )
+
+    model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
+    tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
+    if model_class is None or tokenizer_class is None:
+        required_symbol = _SUPPORTED_ARCHITECTURE if model_class is None else "AutoTokenizer"
+        raise UnsupportedModelError(
+            model_id,
+            available_backends=("gemma4",),
+            details=_gemma4_runtime_support_details(
+                source=source,
+                transformers_version=installed_transformers_version,
+                required_symbol=required_symbol,
+            ),
+        )
+    return cast(Any, model_class), cast(Any, tokenizer_class)
+
+
+def _gemma4_runtime_support_details(
+    *,
+    source: str,
+    transformers_version: str | None,
+    required_symbol: str,
+) -> Mapping[str, object]:
+    return {
+        "backend_name": "gemma4",
+        "installed_transformers_version": transformers_version or "unknown",
+        "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+        "required_symbol": required_symbol,
+        "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+        "guidance": gemma4_runtime_guidance(transformers_version),
+        "source": source,
+    }
+
+
+def _gemma4_meets_minimum_transformers_version(installed_version: str | None) -> bool:
+    if installed_version is None:
+        return False
+    try:
+        return Version(installed_version) >= Version(GEMMA4_MIN_TRANSFORMERS_VERSION)
+    except InvalidVersion:
+        return False
+
+
 @dataclass(frozen=True)
 class Gemma4TopologyConfig:
     """Normalized Gemma 4 text-stack topology metadata."""
@@ -108,27 +185,10 @@ class Gemma4Backend:
         transformers_version = self._installed_version("transformers")
         torch_version = self._installed_version("torch")
 
-        try:
-            transformers_module = import_module("transformers")
-        except Exception as exc:  # pragma: no cover - exercised by environment issues
-            raise UnsupportedModelError(
-                signature.model_id,
-                available_backends=(self.name,),
-                details={
-                    "backend_name": self.name,
-                    "reason": "transformers import failed",
-                    "source": source,
-                    "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
-                    "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
-                    "guidance": gemma4_runtime_guidance(transformers_version),
-                },
-            ) from exc
-
-        model_class, tokenizer_class = self._resolve_runtime_components(
-            transformers_module,
+        model_class, tokenizer_class = check_gemma4_runtime_support(
             model_id=signature.model_id,
             source=source,
-            transformers_version=transformers_version,
+            installed_transformers_version=transformers_version,
         )
 
         torch_module = import_module("torch")

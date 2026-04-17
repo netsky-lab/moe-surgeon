@@ -10,16 +10,14 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from packaging.version import Version
 
 from huggingface_hub import hf_hub_download
 
 from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle
-from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
 from moe_surgeon.models.gemma4 import (
-    GEMMA4_MIN_TRANSFORMERS_VERSION,
     Gemma4Backend,
-    gemma4_runtime_guidance,
+    check_gemma4_runtime_support,
 )
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
@@ -139,18 +137,15 @@ def _bundle() -> LoadedBackendBundle:
 
 def _require_live_gemma4_runtime() -> tuple[object, object]:
     version = importlib_metadata.version("transformers")
-    if Version(version) < Version(GEMMA4_MIN_TRANSFORMERS_VERSION):
-        pytest.skip(gemma4_runtime_guidance(version))
-
     try:
-        transformers = importlib.import_module("transformers")
-        importlib.import_module("transformers.models.gemma4")
-    except Exception:
-        pytest.skip(gemma4_runtime_guidance(version))
-
-    model_class = getattr(transformers, "Gemma4ForConditionalGeneration", None)
-    if model_class is None:
-        pytest.skip(gemma4_runtime_guidance(version))
+        model_class, _ = check_gemma4_runtime_support(
+            model_id=_LIVE_GEMMA4_MODEL_ID,
+            source=_LIVE_GEMMA4_MODEL_ID,
+            installed_transformers_version=version,
+        )
+    except UnsupportedModelError as exc:
+        pytest.skip(str(exc))
+    transformers = importlib.import_module("transformers")
     return transformers, model_class
 
 
@@ -232,8 +227,19 @@ def test_require_live_gemma4_runtime_skips_below_support_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(importlib_metadata, "version", lambda package_name: "5.4.9")
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "check_gemma4_runtime_support",
+        lambda **_: (_ for _ in ()).throw(
+            UnsupportedModelError(
+                "tiny-random/gemma-4-moe",
+                available_backends=("gemma4",),
+                details={"guidance": "shared runtime guidance"},
+            )
+        ),
+    )
 
-    with pytest.raises(pytest.skip.Exception, match="published on or after 2026-04-01"):
+    with pytest.raises(pytest.skip.Exception, match="shared runtime guidance"):
         _require_live_gemma4_runtime()
 
 
