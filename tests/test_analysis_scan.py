@@ -7,10 +7,10 @@ import torch
 
 from moe_surgeon.analysis.metrics import build_expert_stats, static_expert_distribution
 from moe_surgeon.analysis.scan import _require_tensor, scan_model, scan_result_json, write_scan_artifact
-from moe_surgeon.models.backend import LoadedBackendBundle
+from moe_surgeon.models.backend import LoadedBackendBundle, TensorMetadata
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
-from moe_surgeon.schemas import ModelHandle
+from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 
 
 def _gemma4_config(*, moe_layer_indices: list[int]) -> dict[str, object]:
@@ -78,6 +78,50 @@ def _bundle(
         config=config,
         metadata=metadata,
     )
+
+
+class _PermissiveMetricBackend(Gemma4Backend):
+    def extract_router_state(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> RouterState:
+        state_dict = bundle.metadata["state_dict"]
+        router_proj = state_dict[layer.module_paths["router_proj"]]
+        per_expert_scale = state_dict[layer.module_paths["router_per_expert_scale"]]
+        return RouterState(
+            layer_index=layer.layer_index,
+            num_experts=layer.expert_count,
+            top_k=layer.top_k,
+            logits_shape=(0, layer.expert_count),
+            projection_shape=tuple(int(dimension) for dimension in router_proj.shape),
+            per_expert_scale_shape=tuple(int(dimension) for dimension in per_expert_scale.shape),
+            route_scale_present=True,
+            metadata={
+                "router_proj_key": layer.module_paths["router_proj"],
+                "router_scale_key": layer.module_paths["router_scale"],
+                "router_per_expert_scale_key": layer.module_paths["router_per_expert_scale"],
+            },
+        )
+
+    def validate_layer(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+        router_state: RouterState | None = None,
+    ) -> None:
+        del bundle, layer, router_state
+
+    def extract_expert_state(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> dict[str, TensorMetadata]:
+        del bundle, layer
+        return {}
 
 
 def test_static_expert_distribution_is_normalized() -> None:
@@ -295,3 +339,40 @@ def test_scan_model_rejects_router_tensor_shape_mismatch() -> None:
     assert "tensor_key=model.language_model.layers.0.router.per_expert_scale" in message
     assert "expected_shape=4" in message
     assert "actual_shape=3" in message
+
+
+def test_scan_model_rejects_non_finite_router_metric_tensor() -> None:
+    backend = _PermissiveMetricBackend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0, shift=0.0)
+    state_dict["model.language_model.layers.0.router.proj.weight"][1, 1] = float("nan")
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(ShapeInvariantViolationError, match="scan metric tensor must be finite") as exc_info:
+        scan_model(bundle, backend=backend)
+
+    message = str(exc_info.value)
+    assert "layer_index=0" in message
+    assert "tensor_key=model.language_model.layers.0.router.proj.weight" in message
+    assert "tensor_role=router_proj" in message
+
+
+def test_scan_model_rejects_invalid_per_expert_scale_rank_in_metrics_path() -> None:
+    backend = _PermissiveMetricBackend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0, shift=0.0)
+    state_dict["model.language_model.layers.0.router.per_expert_scale"] = torch.ones(
+        (4, 1),
+        dtype=torch.float32,
+    )
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(ShapeInvariantViolationError, match="scan metric tensor rank mismatch") as exc_info:
+        scan_model(bundle, backend=backend)
+
+    message = str(exc_info.value)
+    assert "layer_index=0" in message
+    assert "tensor_key=model.language_model.layers.0.router.per_expert_scale" in message
+    assert "tensor_role=router_per_expert_scale" in message
+    assert "expected_rank=1" in message
+    assert "actual_rank=2" in message

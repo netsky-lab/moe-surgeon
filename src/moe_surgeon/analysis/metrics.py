@@ -8,6 +8,7 @@ from typing import cast
 
 import torch
 
+from moe_surgeon.models.errors import ShapeInvariantViolationError
 from moe_surgeon.schemas import CANONICAL_FLOAT_EPSILON, ExpertStats, sort_experts
 
 _METRIC_DTYPE = torch.float64
@@ -35,9 +36,9 @@ def _require_finite_non_negative(values: torch.Tensor, *, name: str) -> torch.Te
     """Fail fast if a derived metric tensor is not finite and non-negative."""
 
     if not torch.isfinite(values).all():
-        raise ValueError(f"{name} must be finite")
+        raise ShapeInvariantViolationError(f"{name} must be finite")
     if (values < 0).any():
-        raise ValueError(f"{name} must be non-negative")
+        raise ShapeInvariantViolationError(f"{name} must be non-negative")
     return values
 
 
@@ -45,7 +46,7 @@ def _router_probabilities(router_proj_weight: torch.Tensor) -> torch.Tensor:
     """Normalize router projection weights over the expert axis."""
 
     if router_proj_weight.ndim != 2:
-        raise ValueError("router_proj_weight must be rank-2 [num_experts, hidden_size]")
+        raise ShapeInvariantViolationError("router_proj_weight must be rank-2 [num_experts, hidden_size]")
     probabilities = torch.softmax(_upcast_tensor(router_proj_weight), dim=0, dtype=_METRIC_DTYPE)
     return _require_finite_non_negative(probabilities, name="router_probabilities")
 
@@ -80,20 +81,21 @@ def per_expert_scale_norm(per_expert_scale: torch.Tensor | None) -> torch.Tensor
 
     if per_expert_scale is None:
         return None
-    if per_expert_scale.ndim == 0:
-        raise ValueError("per_expert_scale must expose an expert axis")
+    if per_expert_scale.ndim != 1:
+        raise ShapeInvariantViolationError("per_expert_scale must be rank-1 [num_experts]")
     reshaped = _upcast_tensor(per_expert_scale).reshape(per_expert_scale.shape[0], -1)
-    return cast(torch.Tensor, torch.linalg.vector_norm(reshaped, ord=2, dim=1, dtype=_METRIC_DTYPE))
+    norms = cast(torch.Tensor, torch.linalg.vector_norm(reshaped, ord=2, dim=1, dtype=_METRIC_DTYPE))
+    return _require_finite_non_negative(norms, name="per_expert_scale_norm")
 
 
 def top_k_mass_proxy(router_proj_weight: torch.Tensor, *, top_k: int) -> tuple[torch.Tensor, torch.Tensor]:
     """Estimate top-k retention mass and feature wins from static router weights."""
 
     if router_proj_weight.ndim != 2:
-        raise ValueError("router_proj_weight must be rank-2 [num_experts, hidden_size]")
+        raise ShapeInvariantViolationError("router_proj_weight must be rank-2 [num_experts, hidden_size]")
     num_experts = int(router_proj_weight.shape[0])
     if top_k <= 0 or top_k > num_experts:
-        raise ValueError("top_k must be in the range [1, num_experts]")
+        raise ShapeInvariantViolationError("top_k must be in the range [1, num_experts]")
 
     probabilities = _router_probabilities(router_proj_weight)
     _, sorted_indices = torch.sort(probabilities, dim=0, descending=True, stable=True)
@@ -199,7 +201,6 @@ def build_expert_stats(
     )
     ranked: list[ExpertStats] = []
     for item in ordered:
-        assert isinstance(item, ExpertStats)
         ranked.append(
             ExpertStats(
                 layer_index=item.layer_index,

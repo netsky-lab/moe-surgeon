@@ -160,6 +160,43 @@ def _enrich_router_state(
     )
 
 
+def _validate_metric_tensor(
+    tensor: torch.Tensor,
+    *,
+    bundle: LoadedBackendBundle,
+    layer: LayerTopology,
+    tensor_role: str,
+    expected_rank: int,
+) -> None:
+    tensor_key = layer.module_paths.get(tensor_role)
+    if tensor_key is None:
+        raise TopologyMismatchError(
+            "layer module_paths missing required router tensor",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            details={"tensor_role": tensor_role},
+        )
+    actual_shape = tuple(int(dimension) for dimension in tensor.shape)
+    if tensor.ndim != expected_rank:
+        raise ShapeInvariantViolationError(
+            "scan metric tensor rank mismatch",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            actual_shape=actual_shape,
+            details={"tensor_role": tensor_role, "expected_rank": expected_rank, "actual_rank": tensor.ndim},
+        )
+    if not torch.isfinite(tensor).all():
+        raise ShapeInvariantViolationError(
+            "scan metric tensor must be finite",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            actual_shape=actual_shape,
+            details={"tensor_role": tensor_role},
+        )
+
+
 def _aggregate_summary(layer_summaries: list[RouterMetricSummary], expert_stats: list[ExpertStats]) -> StaticScanAggregateSummary:
     """Reduce per-layer metrics into a deterministic scan-level summary."""
 
@@ -299,6 +336,20 @@ def scan_model(
             router_state,
             route_scale=route_scale,
             per_expert_scale=per_expert_scale,
+        )
+        _validate_metric_tensor(
+            router_proj_weight,
+            bundle=bundle,
+            layer=layer,
+            tensor_role="router_proj",
+            expected_rank=2,
+        )
+        _validate_metric_tensor(
+            per_expert_scale,
+            bundle=bundle,
+            layer=layer,
+            tensor_role="router_per_expert_scale",
+            expected_rank=1,
         )
 
         layer_stats, layer_summary = build_expert_stats(
