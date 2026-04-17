@@ -47,10 +47,27 @@
         }
       ],
       "stuckSince": null
+    },
+    "97333f84-e4ed-4f1a-b3d5-0930408fa389": {
+      "attempts": [
+        {
+          "approach": "**Changed**\n\nUpdated [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py) and [CHANGELOG.md](/home/netsky/dev/labs/moe-surgeon/CHANGELOG.md), committed as `d0537a8` (`fix: verify supervisor typecheck metrics path`).\n\nThe root cause was not the repo collector. Th",
+          "success": false,
+          "error": "Authoritative task metrics are still incomplete: `GET /api/tasks/97333f84-e4ed-4f1a-b3d5-0930408fa389/metrics` reports only 2 checks (`lint`, `test_suite`) with summary `2/2`, and [.supervisor/logs/ta",
+          "verifyConfidence": 94,
+          "issues": [
+            "Authoritative task metrics are still incomplete: `GET /api/tasks/97333f84-e4ed-4f1a-b3d5-0930408fa389/metrics` reports only 2 checks (`lint`, `test_suite`) with summary `2/2`, and [.supervisor/logs/task-97333f84.log](/home/netsky/dev/labs/moe-surgeon/.supervisor/logs/task-97333f84.log:1) still records `Metrics: 2/2 passed`. Re-run the real supervisor execution/verify path so the stored task metrics are regenerated from the updated project config.",
+            "The evidence is contradictory: the active supervisor project now has `typeCheckCommand` in persisted `verifyConfig` (`GET /api/state`), and a direct call to the authoritative collector at `/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js` against that config returns `lint`, `typecheck`, and `test_suite` with summary `3/3`; however, the task record itself still holds the older `2/2` result. The execution flow that populates task metrics needs to be replayed or fixed so the task-level authoritative record matches the current project state."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T08:23:42.556Z"
+        }
+      ],
+      "stuckSince": null
     }
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T08:08:09.177Z"
+    "lastUpdated": "2026-04-17T08:23:42.556Z"
   }
 }
