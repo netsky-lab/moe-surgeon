@@ -99,6 +99,13 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Run `npm run lint` for the Ruff gate defined in `AGENTS.md`.
 - Run `npm run typecheck` for the `python -m mypy src` gate.
 - Run `npm test` for the `python -m pytest` suite.
+- The repo pytest config disables globally installed pytest entry-point plugin
+  autoload and pins `--basetemp=.tmp/pytest`, so `python -m pytest` and
+  `python -m moe_surgeon.repo_metrics --check tests` execute the repo suite
+  without ambient plugin imports and with a repo-managed pytest temp root.
+- When the host temp directory environment is missing or points to an unusable
+  location, test subprocesses fall back to the repo-managed `.tmp/pytest`
+  directory.
 - `.supervisor/project.json` routes supervisor checks through the repo metrics
   collector and stores the underlying raw lint, typecheck, and test commands in
   one place.

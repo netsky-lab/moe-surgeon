@@ -6,9 +6,12 @@ import argparse
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
+
+from moe_surgeon.test_env import apply_pytest_isolation
 
 
 @dataclass(frozen=True)
@@ -270,6 +273,7 @@ def _run_check(
     timeout_seconds: int,
 ) -> MetricCheck:
     started_at = datetime.now(timezone.utc)
+    env = _build_check_env(root_path, category=category, name=name, command=command)
     result = subprocess.run(
         command,
         shell=True,
@@ -277,6 +281,7 @@ def _run_check(
         capture_output=True,
         text=True,
         cwd=root_path,
+        env=env,
         timeout=timeout_seconds,
     )
     completed_at = datetime.now(timezone.utc)
@@ -291,6 +296,21 @@ def _run_check(
         duration_ms=duration_ms,
         output=output,
     )
+
+
+def _build_check_env(
+    root_path: Path,
+    *,
+    category: str,
+    name: str,
+    command: str,
+) -> dict[str, str] | None:
+    if category != "tests" or name != "tests":
+        return None
+
+    env = dict(os.environ)
+    apply_pytest_isolation(root_path, env=env)
+    return env
 
 
 def _resolve_output_path(

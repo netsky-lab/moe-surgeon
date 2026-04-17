@@ -115,6 +115,16 @@
 - Added fresh-process regression coverage for `moe_surgeon.models.backend`,
   `moe_surgeon.models.registry`, and the compatibility `BackendRegistry` import
   path while asserting `torch`, `transformers`, and `safetensors` stay unloaded.
+- Stabilized repo test execution against ambient pytest plugins and unusable
+  host tempdir settings by adding `src/moe_surgeon/test_env.py`, repo-level
+  pytest `addopts` isolation in `pyproject.toml`, and repo-metrics test-check
+  environment isolation.
+- Expanded `tests/test_repo_metrics.py` with subprocess regressions that verify
+  the isolated tests check disables plugin autoload, provisions `.tmp/pytest`
+  when needed, and reports only real repo test failures.
+- Updated `README.md` to document the repo-local pytest isolation and tempdir
+  fallback used by direct and supervisor-driven test runs.
+
 - Tightened `models/backend.py` and `models/registry.py` so backend resolution
   accepts either lightweight config mappings or explicit signatures while
   preserving deterministic priority/name ordering and explicit compatibility

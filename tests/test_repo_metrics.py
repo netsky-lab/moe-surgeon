@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 
@@ -32,6 +34,7 @@ def _write_project_json(
     include_verify_config: bool = False,
     lint_command: str | None = None,
     typecheck_command: str | None = None,
+    test_command: str | None = None,
 ) -> None:
     supervisor_dir = root / ".supervisor"
     supervisor_dir.mkdir(parents=True, exist_ok=True)
@@ -47,7 +50,11 @@ def _write_project_json(
             else typecheck_command
         ),
         "buildCommand": None,
-        "testCommand": f'{sys.executable} -c "print(\'tests-ok\')"',
+        "testCommand": (
+            f'{sys.executable} -c "print(\'tests-ok\')"'
+            if test_command is None
+            else test_command
+        ),
         "coverageCommand": None,
         "browserTestCommand": None,
     }
@@ -67,12 +74,17 @@ def _write_project_json(
     )
 
 
-def _run_repo_metrics(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run_repo_metrics(
+    root: Path,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "moe_surgeon.repo_metrics", "--root", str(root), *args],
         check=False,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 
@@ -96,6 +108,16 @@ def test_supervisor_verify_config_uses_repo_metrics_entrypoint() -> None:
         "coverageCommand": None,
         "browserTestCommand": None,
     }
+
+
+def test_repo_pytest_config_disables_plugin_autoload_and_uses_repo_basetemp() -> None:
+    pyproject_text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'pytest>=8.4' in pyproject_text
+    assert '--disable-plugin-autoload' in pyproject_text
+    assert '--basetemp=.tmp/pytest' in pyproject_text
 
 
 def test_ci_workflow_runs_repo_metrics_entrypoint() -> None:
@@ -277,6 +299,109 @@ def test_repo_metrics_runs_configured_tests_check(tmp_path: Path) -> None:
     assert payload["checks"][0]["command"] == f'{sys.executable} -c "print(\'tests-ok\')"'
     assert payload["checks"][0]["output"] == "tests-ok"
     assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
+def test_repo_metrics_tests_check_uses_isolated_env_and_repo_tempdir(tmp_path: Path) -> None:
+    temp_probe = (
+        "import json, os, tempfile; "
+        "print(json.dumps({"
+        "'autoload': os.environ.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD'), "
+        "'tmpdir': tempfile.gettempdir(), "
+        "'TMPDIR': os.environ.get('TMPDIR'), "
+        "'TMP': os.environ.get('TMP'), "
+        "'TEMP': os.environ.get('TEMP')"
+        "}, sort_keys=True))"
+    )
+    _write_project_json(
+        tmp_path,
+        test_command=f"{shlex.quote(sys.executable)} -c {shlex.quote(temp_probe)}",
+    )
+    broken_temp = str(tmp_path / "missing-temp-root")
+    env = {
+        **os.environ,
+        "TMPDIR": broken_temp,
+        "TMP": broken_temp,
+        "TEMP": broken_temp,
+    }
+
+    result = _run_repo_metrics(tmp_path, "--check", "tests", env=env)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    check_payload = json.loads(payload["checks"][0]["output"])
+    expected_tempdir = str(tmp_path / ".tmp" / "pytest")
+
+    assert check_payload == {
+        "TEMP": expected_tempdir,
+        "TMP": expected_tempdir,
+        "TMPDIR": expected_tempdir,
+        "autoload": "1",
+        "tmpdir": expected_tempdir,
+    }
+    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0}
+    assert (tmp_path / ".tmp" / "pytest").is_dir()
+
+
+def test_repo_metrics_tests_check_reports_repo_test_failures_not_startup_noise(
+    tmp_path: Path,
+) -> None:
+    failing_probe = (
+        "import os, pathlib, sys, tempfile; "
+        "expected = pathlib.Path(os.environ['TMPDIR']); "
+        "assert os.environ.get('PYTEST_DISABLE_PLUGIN_AUTOLOAD') == '1'; "
+        "assert pathlib.Path(tempfile.gettempdir()) == expected; "
+        "assert expected.is_dir(); "
+        "sys.stderr.write('repo failure\\n'); "
+        "raise SystemExit(5)"
+    )
+    _write_project_json(
+        tmp_path,
+        test_command=f"{shlex.quote(sys.executable)} -c {shlex.quote(failing_probe)}",
+    )
+    broken_temp = str(tmp_path / "missing-temp-root")
+    env = {
+        **os.environ,
+        "TMPDIR": broken_temp,
+        "TMP": broken_temp,
+        "TEMP": broken_temp,
+    }
+
+    result = _run_repo_metrics(tmp_path, "--check", "tests", env=env)
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["summary"] == {"total": 1, "passed": 0, "failed": 1}
+    assert payload["checks"][0]["exit_code"] == 5
+    assert payload["checks"][0]["output"] == "repo failure"
+    assert "FileNotFoundError" not in payload["checks"][0]["output"]
+    assert "plugin" not in payload["checks"][0]["output"].lower()
+
+
+def test_direct_python_m_pytest_disables_ambient_plugins_and_uses_repo_tempdir() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--trace-config",
+            "tests/test_cli.py",
+            "-k",
+            "version",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    combined_output = result.stdout + result.stderr
+    assert "django-" not in combined_output
+    assert "langsmith-" not in combined_output
+    assert "benchmark-" not in combined_output
+    assert (repo_root / ".tmp" / "pytest").is_dir()
 
 
 def test_actual_supervisor_collector_resolves_repo_config_with_typecheck() -> None:
