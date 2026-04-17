@@ -992,6 +992,23 @@ def sort_plan_items(items: Iterable[PrunePlanItem]) -> Tuple[PrunePlanItem, ...]
     )
 
 
+def sort_activation_stats(items: Iterable[ActivationStats]) -> tuple[ActivationStats, ...]:
+    """Sort activation stats deterministically by layer and expert index."""
+
+    return tuple(
+        sorted(
+            items,
+            key=lambda item: (
+                item.layer_index,
+                item.expert_index,
+                -item.token_count,
+                -_sort_bucket(item.weighted_token_count, epsilon=CANONICAL_FLOAT_EPSILON),
+                -_sort_bucket(item.mass_sum, epsilon=CANONICAL_FLOAT_EPSILON),
+            ),
+        )
+    )
+
+
 def sort_topology(
     layers: Iterable[LayerTopology], *, with_ref_fallback: bool = True
 ) -> Tuple[LayerTopology, ...]:
@@ -1105,6 +1122,7 @@ __all__ = [
     "TopologyMismatchError",
     "LayerReferenceError",
     "sort_experts",
+    "sort_activation_stats",
     "sort_plan_items",
     "sort_topology",
     "to_dict",
