@@ -6,7 +6,7 @@ import pytest
 import torch
 
 from moe_surgeon.analysis.metrics import build_expert_stats, static_expert_distribution
-from moe_surgeon.analysis.scan import scan_model
+from moe_surgeon.analysis.scan import scan_model, scan_result_json, write_scan_artifact
 from moe_surgeon.models.backend import LoadedBackendBundle
 from moe_surgeon.models.errors import TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
@@ -180,9 +180,33 @@ def test_scan_model_returns_one_router_state_per_moe_layer() -> None:
 
     assert result.aggregate_summary.total_static_gate_mass == pytest.approx(2.0)
     assert 0.0 <= result.aggregate_summary.mean_normalized_entropy <= 1.0
+    assert result.manifest.metadata["model_fingerprint"] == result.manifest.model_handle.model_fingerprint
+    assert result.manifest.metadata["canonical_manifest_digest"] == result.manifest.canonical_digest
+    assert isinstance(result.manifest.metadata["canonical_artifact_digest"], str)
 
     repeated = scan_model(bundle, backend=backend)
     assert repeated == result
+
+
+def test_scan_writer_emits_byte_identical_canonical_json(tmp_path) -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0, 2])
+    state_dict: dict[str, torch.Tensor] = {}
+    state_dict.update(_layer_state(0, shift=0.0))
+    state_dict.update(_layer_state(2, shift=0.25))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    first = scan_model(bundle, backend=backend)
+    second = scan_model(bundle, backend=backend)
+
+    first_json = scan_result_json(first)
+    second_json = scan_result_json(second)
+    assert first_json == second_json
+
+    first_path = write_scan_artifact(tmp_path / "scan-first.json", first)
+    second_path = write_scan_artifact(tmp_path / "scan-second.json", second)
+
+    assert first_path.read_bytes() == second_path.read_bytes()
 
 
 def test_scan_model_rejects_topology_only_state_keys_metadata() -> None:

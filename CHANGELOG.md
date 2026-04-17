@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added canonical static scan artifact helpers in `src/moe_surgeon/analysis/scan.py` for sorted JSON payload emission, timestamp-free content digests, and byte-identical repeated writes from identical inputs.
+- Added timestamp-independent `RunArtifactManifest.canonical_digest` support in `src/moe_surgeon/schemas.py` and surfaced stable scan manifest metadata for `model_fingerprint`, `canonical_manifest_digest`, and `canonical_artifact_digest`.
+- Updated `src/moe_surgeon/cli/main.py` scan placeholder text to point at the canonical scan artifact helpers and expanded regression coverage in `tests/test_analysis_scan.py` and `tests/test_schemas.py`.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented

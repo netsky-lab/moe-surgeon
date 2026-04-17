@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from hashlib import sha256
+from dataclasses import asdict, dataclass
 from math import fsum
+from pathlib import Path
 from typing import Mapping
 
 import torch
@@ -11,7 +13,15 @@ import torch
 from moe_surgeon.analysis.metrics import RouterMetricSummary, build_expert_stats
 from moe_surgeon.models.backend import LoadedBackendBundle, ModelBackend, resolve_backend
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
-from moe_surgeon.schemas import ExpertStats, LayerTopology, RouterState, RunArtifactManifest, sort_topology
+from moe_surgeon.schemas import (
+    ExpertStats,
+    LayerTopology,
+    RouterState,
+    RunArtifactManifest,
+    to_dict,
+    to_json,
+    sort_topology,
+)
 
 
 @dataclass(frozen=True)
@@ -35,6 +45,23 @@ class StaticScanResult:
     layer_summaries: tuple[RouterMetricSummary, ...]
     aggregate_summary: StaticScanAggregateSummary
     manifest: RunArtifactManifest
+
+
+def _sorted_router_states(states: tuple[RouterState, ...]) -> tuple[RouterState, ...]:
+    return tuple(sorted(states, key=lambda state: state.layer_index))
+
+
+def _sorted_expert_stats(stats: tuple[ExpertStats, ...]) -> tuple[ExpertStats, ...]:
+    return tuple(
+        sorted(
+            stats,
+            key=lambda stat: (
+                stat.layer_index,
+                stat.static_rank if stat.static_rank is not None else stat.expert_index,
+                stat.expert_index,
+            ),
+        )
+    )
 
 
 def _resolve_scan_backend(
@@ -149,6 +176,99 @@ def _aggregate_summary(layer_summaries: list[RouterMetricSummary], expert_stats:
     )
 
 
+def _manifest_with_scan_digests(result: StaticScanResult) -> RunArtifactManifest:
+    metadata = dict(result.manifest.metadata)
+    metadata["model_fingerprint"] = result.manifest.model_handle.model_fingerprint if result.manifest.model_handle else None
+    base_manifest = RunArtifactManifest(
+        run_id=result.manifest.run_id,
+        command=result.manifest.command,
+        model_handle=result.manifest.model_handle,
+        top_k=result.manifest.top_k,
+        prompt_count=result.manifest.prompt_count,
+        seed=result.manifest.seed,
+        prompt_set_hash=result.manifest.prompt_set_hash,
+        started_at=result.manifest.started_at,
+        finished_at=result.manifest.finished_at,
+        input_checksums=dict(result.manifest.input_checksums),
+        output_paths=dict(result.manifest.output_paths),
+        parent_artifacts=tuple(result.manifest.parent_artifacts),
+        run_plan=result.manifest.run_plan,
+        metadata=metadata,
+    )
+    manifest_digest = base_manifest.canonical_digest
+    metadata["canonical_manifest_digest"] = manifest_digest
+    artifact_digest = sha256(
+        to_json(_scan_artifact_payload(result, manifest=base_manifest, include_artifact_digest=False)).encode("utf-8")
+    ).hexdigest()
+    metadata["canonical_artifact_digest"] = artifact_digest
+    return RunArtifactManifest(
+        run_id=base_manifest.run_id,
+        command=base_manifest.command,
+        model_handle=base_manifest.model_handle,
+        top_k=base_manifest.top_k,
+        prompt_count=base_manifest.prompt_count,
+        seed=base_manifest.seed,
+        prompt_set_hash=base_manifest.prompt_set_hash,
+        started_at=base_manifest.started_at,
+        finished_at=base_manifest.finished_at,
+        input_checksums=dict(base_manifest.input_checksums),
+        output_paths=dict(base_manifest.output_paths),
+        parent_artifacts=tuple(base_manifest.parent_artifacts),
+        run_plan=base_manifest.run_plan,
+        metadata=metadata,
+    )
+
+
+def _scan_artifact_payload(
+    result: StaticScanResult,
+    *,
+    manifest: RunArtifactManifest | None = None,
+    include_artifact_digest: bool = True,
+) -> dict[str, object]:
+    active_manifest = result.manifest if manifest is None else manifest
+    metadata = dict(active_manifest.metadata)
+    if not include_artifact_digest:
+        metadata.pop("canonical_artifact_digest", None)
+    if active_manifest.model_handle is not None:
+        metadata["model_fingerprint"] = active_manifest.model_handle.model_fingerprint
+    manifest_payload = to_dict(active_manifest)
+    manifest_payload["metadata"] = metadata
+    return {
+        "aggregate_summary": to_dict(asdict(result.aggregate_summary)),
+        "expert_stats": [to_dict(item) for item in _sorted_expert_stats(result.expert_stats)],
+        "layer_summaries": [
+            to_dict(asdict(item))
+            for item in sorted(result.layer_summaries, key=lambda item: item.layer_index)
+        ],
+        "layers": [to_dict(item) for item in sort_topology(result.layers)],
+        "manifest": manifest_payload,
+        "model_handle": to_dict(active_manifest.model_handle),
+        "router_states": [to_dict(item) for item in _sorted_router_states(result.router_states)],
+        "scan_type": "static_router_scan",
+        "schema_version": active_manifest.schema_version,
+    }
+
+
+def scan_result_payload(result: StaticScanResult) -> dict[str, object]:
+    """Return the canonical JSON-ready payload for a static scan result."""
+
+    return _scan_artifact_payload(result)
+
+
+def scan_result_json(result: StaticScanResult, *, compact: bool = True) -> str:
+    """Serialize a static scan result with canonical ordering."""
+
+    return to_json(scan_result_payload(result), compact=compact)
+
+
+def write_scan_artifact(path: str | Path, result: StaticScanResult, *, compact: bool = True) -> Path:
+    """Write a canonical static scan artifact and return the output path."""
+
+    target = Path(path)
+    target.write_text(scan_result_json(result, compact=compact), encoding="utf-8")
+    return target
+
+
 def scan_model(
     bundle: LoadedBackendBundle,
     *,
@@ -208,14 +328,29 @@ def scan_model(
             "mean_normalized_entropy": aggregate_summary.mean_normalized_entropy,
         },
     )
-    return StaticScanResult(
+    result = StaticScanResult(
         layers=layers,
-        router_states=tuple(router_states),
-        expert_stats=tuple(expert_stats),
+        router_states=_sorted_router_states(tuple(router_states)),
+        expert_stats=_sorted_expert_stats(tuple(expert_stats)),
         layer_summaries=tuple(layer_summaries),
         aggregate_summary=aggregate_summary,
         manifest=manifest,
     )
+    return StaticScanResult(
+        layers=result.layers,
+        router_states=result.router_states,
+        expert_stats=result.expert_stats,
+        layer_summaries=result.layer_summaries,
+        aggregate_summary=result.aggregate_summary,
+        manifest=_manifest_with_scan_digests(result),
+    )
 
 
-__all__ = ["StaticScanAggregateSummary", "StaticScanResult", "scan_model"]
+__all__ = [
+    "StaticScanAggregateSummary",
+    "StaticScanResult",
+    "scan_model",
+    "scan_result_json",
+    "scan_result_payload",
+    "write_scan_artifact",
+]

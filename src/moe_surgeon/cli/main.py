@@ -20,9 +20,9 @@ def cli() -> None:
 
 @cli.command()
 def scan() -> None:
-    """Inspect static router state and emit deterministic artifacts."""
+    """Inspect static router state and emit canonical scan artifacts."""
 
-    click.echo("scan is not implemented yet")
+    click.echo("scan CLI wiring is not implemented yet; canonical scan artifact helpers are available in moe_surgeon.analysis.scan")
 
 
 @cli.command()
