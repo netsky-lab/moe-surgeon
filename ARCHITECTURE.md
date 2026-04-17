@@ -66,6 +66,9 @@ Pruning uses a pure strategy layer first, followed by a planner:
 
 - prune/strategies.py: registry-backed strategies emit PruneCandidate lists.
 - prune/planner.py: applies constraints and budgets to emit PrunePlan.
+- Planner traceability is deterministic: canonicalized constraints, resolved
+  budget bounds, source run identity, and candidate digests are embedded in the
+  plan payload so repeated identical inputs produce byte-stable JSON.
 
 Mutations are performed in a later apply layer after planning.
 

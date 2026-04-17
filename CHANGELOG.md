@@ -116,6 +116,18 @@
 - Restored the `moe_surgeon.models.backend.BackendRegistry` compatibility
   import as a lazy export so the legacy import path still works without
   recreating the `backend.py`/`registry.py` circular import or adding import
+## 2026-04-17
+- Completed the P7 pruning strategy/planner hardening slice in
+  `src/moe_surgeon/prune/planner.py` by recording canonical constraint JSON,
+  resolved per-layer budget bounds, and candidate digests in deterministic plan
+  metadata and by folding candidate content into stable `plan_id` generation.
+- Expanded `tests/test_prune_planner.py` coverage for built-in strategy
+  metadata, schema tie-break propagation, infeasible budget rejection, stable
+  cross-layer tie handling under a global budget, and repeated byte-identical
+  traceability output.
+- Updated `ARCHITECTURE.md` to document deterministic prune-plan traceability
+  fields and budget metadata.
+
   weight to plain `import moe_surgeon.models.backend`.
 - Added fresh-process regression coverage for `moe_surgeon.models.backend`,
   `moe_surgeon.models.registry`, and the compatibility `BackendRegistry` import

@@ -10,6 +10,7 @@ from moe_surgeon.prune.planner import (
 )
 from moe_surgeon.prune.strategies import StrategyMetadata, strategy_registry
 from moe_surgeon.schemas import (
+    CANONICAL_EXPERT_TIE_BREAK_POLICY,
     ActivationStats,
     ExpertStats,
     LayerTopology,
@@ -173,6 +174,23 @@ def test_frequency_strategy_ranking_is_deterministic_with_tie_breaks() -> None:
         (0, 1),
         (0, 2),
     ]
+    assert all(
+        candidate.metadata["tie_break_policy"] == CANONICAL_EXPERT_TIE_BREAK_POLICY
+        for candidate in candidates
+    )
+
+
+def test_strategy_registry_exposes_built_in_metadata() -> None:
+    combined = strategy_registry.get("combined")
+
+    assert combined.metadata.score_columns == (
+        "combined_score",
+        "token_share",
+        "runtime_mass_share",
+        "static_gate_share",
+    )
+    assert combined.metadata.normalization_behavior == "per_layer_fraction_weighted_sum"
+    assert combined.metadata.tie_break_policy == CANONICAL_EXPERT_TIE_BREAK_POLICY
 
 
 def test_built_in_strategies_validate_missing_inputs_and_partial_coverage() -> None:
@@ -265,6 +283,30 @@ def test_planner_rejects_invalid_global_budget_and_unknown_override_layer() -> N
         )
 
 
+def test_planner_rejects_infeasible_layer_bounds() -> None:
+    with pytest.raises(TopologyMismatchError, match="minimum experts exceeds layer expert_count"):
+        build_prune_plan(
+            _topology(),
+            strategy="frequency",
+            activation_stats=_activation_stats(),
+            constraints=PlannerConstraints(min_experts_per_layer=4),
+            model_signature="model-a",
+        )
+
+    with pytest.raises(ValueError, match="keep bounds are infeasible"):
+        build_prune_plan(
+            _topology(),
+            strategy="frequency",
+            activation_stats=_activation_stats(),
+            constraints=PlannerConstraints(
+                min_experts_per_layer=1,
+                max_experts_per_layer=1,
+                layer_overrides={0: LayerConstraintOverride(min_experts=2)},
+            ),
+            model_signature="model-a",
+        )
+
+
 def test_planner_honors_exact_per_layer_override() -> None:
     plan = build_prune_plan(
         _topology(),
@@ -293,6 +335,81 @@ def test_combined_strategy_fuses_static_and_runtime_signals() -> None:
     )
 
     assert [item.keep_indices for item in plan.per_layer_plans] == [(0,), (0, 1)]
+
+
+def test_planner_uses_stable_cross_layer_tie_breaking_for_global_budget() -> None:
+    tied_activation_stats = (
+        ActivationStats(
+            layer_index=0,
+            expert_index=0,
+            token_count=10,
+            weighted_token_count=10.0,
+            mass_sum=10.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+        ActivationStats(
+            layer_index=0,
+            expert_index=1,
+            token_count=5,
+            weighted_token_count=5.0,
+            mass_sum=5.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+        ActivationStats(
+            layer_index=0,
+            expert_index=2,
+            token_count=5,
+            weighted_token_count=5.0,
+            mass_sum=5.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+        ActivationStats(
+            layer_index=1,
+            expert_index=0,
+            token_count=10,
+            weighted_token_count=10.0,
+            mass_sum=10.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+        ActivationStats(
+            layer_index=1,
+            expert_index=1,
+            token_count=5,
+            weighted_token_count=5.0,
+            mass_sum=5.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+        ActivationStats(
+            layer_index=1,
+            expert_index=2,
+            token_count=5,
+            weighted_token_count=5.0,
+            mass_sum=5.0,
+            mean_weight=1.0,
+            entropy=0.1,
+            n_tokens=20,
+        ),
+    )
+
+    plan = build_prune_plan(
+        _topology(),
+        strategy="frequency",
+        activation_stats=tied_activation_stats,
+        constraints=PlannerConstraints(global_target_experts=3, min_experts_per_layer=1),
+        model_signature="model-tied",
+    )
+
+    assert [item.keep_indices for item in plan.per_layer_plans] == [(0, 1), (0,)]
 
 
 def test_plan_metadata_traceability_and_repeated_output_are_stable() -> None:
@@ -327,5 +444,13 @@ def test_plan_metadata_traceability_and_repeated_output_are_stable() -> None:
     assert first.source_run_id == "run-001"
     assert first.constraints["layer_0_max_experts"] == 2
     assert first.metadata["total_target_experts"] == 4
+    assert first.metadata["budget_min_total"] == 2
+    assert first.metadata["budget_max_total"] == 5
+    assert first.metadata["layer_0_minimum_keep"] == 1
+    assert first.metadata["layer_0_maximum_keep"] == 2
+    assert first.metadata["constraints_json"] == (
+        '{"global_target_experts":4,"layer_overrides":{"0":{"max_experts":2}},'
+        '"min_experts_per_layer":1}'
+    )
     assert isinstance(first.metadata["constraint_digest"], str)
     assert isinstance(first.metadata["candidate_digest"], str)

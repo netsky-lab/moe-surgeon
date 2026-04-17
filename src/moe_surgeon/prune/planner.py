@@ -128,6 +128,12 @@ class _LayerBudget:
     maximum_keep: int
 
 
+def _canonical_constraints_json(constraints: PlannerConstraints) -> str:
+    """Return canonical JSON for deterministic traceability fields."""
+
+    return to_json(constraints.canonical_payload())
+
+
 def _ordered_unique_topology(topology: Sequence[LayerTopology]) -> tuple[LayerTopology, ...]:
     ordered = sort_topology(topology)
     seen: set[int] = set()
@@ -336,6 +342,7 @@ def _plan_id(
     source_run_id: str | None,
     constraints: PlannerConstraints,
     topology: Sequence[LayerTopology],
+    candidate_digest: str,
     plan_items: Sequence[PrunePlanItem],
 ) -> str:
     payload = {
@@ -345,9 +352,36 @@ def _plan_id(
         "source_run_id": source_run_id,
         "constraints": constraints.canonical_payload(),
         "topology": [layer.to_dict() for layer in topology],
+        "candidate_digest": candidate_digest,
         "per_layer_plans": [item.to_dict() for item in plan_items],
     }
     return f"plan-{sha256(to_json(payload).encode('utf-8')).hexdigest()[:16]}"
+
+
+def _budget_metadata(
+    budgets: Sequence[_LayerBudget],
+    *,
+    requested_global_target: int,
+    candidate_digest: str,
+    constraints_json: str,
+) -> dict[str, SchemaKey]:
+    """Flatten resolved budget diagnostics into scalar metadata fields."""
+
+    metadata: dict[str, SchemaKey] = {
+        "budget_min_total": sum(budget.minimum_keep for budget in budgets),
+        "budget_max_total": sum(budget.maximum_keep for budget in budgets),
+        "candidate_digest": candidate_digest,
+        "constraints_json": constraints_json,
+        "layer_count": len(budgets),
+        "total_dropped_experts": sum(budget.layer.expert_count for budget in budgets)
+        - requested_global_target,
+        "total_source_experts": sum(budget.layer.expert_count for budget in budgets),
+        "total_target_experts": requested_global_target,
+    }
+    for budget in budgets:
+        metadata[f"layer_{budget.layer.layer_index}_minimum_keep"] = budget.minimum_keep
+        metadata[f"layer_{budget.layer.layer_index}_maximum_keep"] = budget.maximum_keep
+    return metadata
 
 
 def build_prune_plan(
@@ -397,14 +431,20 @@ def build_prune_plan(
             else "unknown"
         )
     )
-    constraint_digest = sha256(
-        to_json(active_constraints.canonical_payload()).encode("utf-8")
-    ).hexdigest()
+    constraints_json = _canonical_constraints_json(active_constraints)
+    constraint_digest = sha256(constraints_json.encode("utf-8")).hexdigest()
     candidate_digest = sha256(
         to_json([candidate.to_dict() for candidates in ranked_candidates.values() for candidate in candidates]).encode(
             "utf-8"
         )
     ).hexdigest()
+    metadata = _budget_metadata(
+        budgets,
+        requested_global_target=requested_global_target,
+        candidate_digest=candidate_digest,
+        constraints_json=constraints_json,
+    )
+    metadata["constraint_digest"] = constraint_digest
     return PrunePlan(
         plan_id=_plan_id(
             model_signature=resolved_model_signature,
@@ -413,6 +453,7 @@ def build_prune_plan(
             source_run_id=source_run_id,
             constraints=active_constraints,
             topology=ordered_topology,
+            candidate_digest=candidate_digest,
             plan_items=plan_items,
         ),
         model_signature=resolved_model_signature,
@@ -425,15 +466,7 @@ def build_prune_plan(
         created_at=CANONICAL_DEFAULT_TIMESTAMP,
         source_run_id=source_run_id,
         constraints=active_constraints.plan_constraints(),
-        metadata={
-            "layer_count": len(ordered_topology),
-            "total_source_experts": sum(layer.expert_count for layer in ordered_topology),
-            "total_target_experts": requested_global_target,
-            "total_dropped_experts": sum(layer.expert_count for layer in ordered_topology)
-            - requested_global_target,
-            "constraint_digest": constraint_digest,
-            "candidate_digest": candidate_digest,
-        },
+        metadata=metadata,
     )
 
 
