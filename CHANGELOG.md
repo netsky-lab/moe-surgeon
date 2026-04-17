@@ -52,6 +52,15 @@
 - Extended `tests/test_models_gemma4.py` so synthetic Gemma4 layers model the published hybrid topology and regressions cover missing dense hybrid keys, wrong `moe_intermediate_size`, and invalid expert tensor rank failures.
 
 ## 2026-04-17
+- Extended `src/moe_surgeon/runtime/profiler.py` benchmark artifact output with
+  explicit canonical `profiler_config` payloads, stable prompt/input checksum
+  tracking, and direct JSON serialization helpers for deterministic bench
+  artifacts that stay aligned with topology/activation ordering.
+- Expanded `tests/test_runtime_profiler.py` with regression coverage for
+  input-payload hashing, profiler-config hashing, and canonical JSON artifact
+  writing.
+
+## 2026-04-17
 - Registered the Gemma4 backend through a canonical default-registry entry in
   `src/moe_surgeon/models/gemma4.py` and updated
   `src/moe_surgeon/models/backend.py` to consume default backend entries in a

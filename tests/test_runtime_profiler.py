@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -278,6 +279,44 @@ def test_benchmark_builds_deterministic_manifest_and_sorted_stats() -> None:
         (0, 3),
     ]
     assert first.to_payload()["manifest"]["command"] == "bench"
+    assert first.to_payload()["profiler_config"] == {
+        "batch_size": 2,
+        "capture_router_scores": False,
+    }
+
+
+def test_benchmark_payload_carries_input_and_profiler_hashes_and_writes_json(
+    tmp_path: Path,
+) -> None:
+    layer = _layer(0)
+    module = FakeRouterModule(name=layer.layer_name)
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    with RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,)) as profiler:
+        module.run(
+            {
+                "top_k_indices": [[[0, 1]]],
+                "top_k_weights": [[[0.55, 0.45]]],
+            }
+        )
+        profiler.accumulate(attention_mask=[[1]])
+        result = benchmark(
+            profiler=profiler,
+            input_payloads=({"input_ids": [1, 2, 3], "attention_mask": [1, 1, 1]},),
+            profiler_config={"include_router_scores": False, "batch_size": 1},
+        )
+
+    payload = result.to_payload()
+    assert payload["input_payload_hash"] == result.input_payload_hash
+    assert payload["profiler_config"] == {"batch_size": 1, "include_router_scores": False}
+    assert result.manifest.input_checksums["input_payloads"] == result.input_payload_hash
+    assert result.manifest.prompt_set_hash == result.input_payload_hash
+    assert result.manifest.metadata["profiler_config_hash"] == result.manifest.input_checksums["profiler_config"]
+
+    output_path = tmp_path / "bench.json"
+    result.write_json(output_path)
+
+    assert output_path.read_text(encoding="utf-8") == result.to_json()
 
 
 def test_iter_prompt_batches_uses_attention_mask_for_active_token_counts() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 from math import log
+from pathlib import Path
 from types import TracebackType
 from typing import Callable, Iterable, Iterator, Literal, Mapping, MutableSequence, Protocol, Sequence, cast
 
@@ -17,6 +18,7 @@ from moe_surgeon.schemas import (
     RouterState,
     RunArtifactManifest,
     to_json,
+    to_json_file,
 )
 
 
@@ -71,15 +73,29 @@ class BenchmarkResult:
     manifest: RunArtifactManifest
     topology: tuple[LayerTopology, ...]
     activation_stats: tuple[ActivationStats, ...]
+    profiler_config: Mapping[str, object] = field(default_factory=dict)
+    input_payload_hash: str | None = None
 
     def to_payload(self) -> dict[str, object]:
         """Return a JSON-ready payload for deterministic artifact writing."""
 
         return {
             "manifest": self.manifest.to_dict(),
+            "profiler_config": _canonical_json_mapping(self.profiler_config),
             "topology": [layer.to_dict() for layer in self.topology],
             "activation_stats": [item.to_dict() for item in self.activation_stats],
+            "input_payload_hash": self.input_payload_hash,
         }
+
+    def to_json(self, *, compact: bool = True) -> str:
+        """Return the canonical benchmark artifact JSON payload."""
+
+        return to_json(self.to_payload(), compact=compact)
+
+    def write_json(self, path: str | Path) -> Path:
+        """Write the canonical benchmark artifact payload to disk."""
+
+        return to_json_file(path, self.to_payload())
 
 
 @dataclass(frozen=True)
@@ -657,11 +673,15 @@ def benchmark(
     ordered_topology = profiler.topology
     activation_stats = align_activation_stats(layers=ordered_topology, stats=profiler.activation_stats())
     canonical_profiler_config = _canonical_json_mapping(profiler_config or {})
-    prompt_payload = {
-        "prompts": list(prompts),
-        "input_payloads": [_canonical_json_mapping(payload) for payload in input_payloads],
-    }
-    prompt_set_hash = sha256(to_json(prompt_payload).encode("utf-8")).hexdigest()
+    canonical_input_payloads = tuple(_canonical_json_mapping(payload) for payload in input_payloads)
+    prompt_payload = {"prompts": list(prompts)}
+    prompt_hash = sha256(to_json(prompt_payload).encode("utf-8")).hexdigest()
+    input_payload_hash = None
+    if canonical_input_payloads:
+        input_payload_hash = sha256(
+            to_json({"input_payloads": list(canonical_input_payloads)}).encode("utf-8")
+        ).hexdigest()
+    prompt_set_hash = input_payload_hash if not prompts and input_payload_hash is not None else prompt_hash
     config_hash = sha256(to_json(canonical_profiler_config).encode("utf-8")).hexdigest()
     model_fingerprint = profiler._bundle.model_handle.model_fingerprint
     run_seed = profiler._bundle.model_handle.seed if seed is None else seed
@@ -669,6 +689,7 @@ def benchmark(
         "backend_name": profiler._bundle.backend_name,
         "model_fingerprint": model_fingerprint,
         "prompt_set_hash": prompt_set_hash,
+        "input_payload_hash": input_payload_hash,
         "profiler_config_hash": config_hash,
         "top_k": ordered_topology[0].top_k if ordered_topology else 1,
         "seed": run_seed,
@@ -688,6 +709,7 @@ def benchmark(
         input_checksums={
             "prompt_set": prompt_set_hash,
             "profiler_config": config_hash,
+            **({} if input_payload_hash is None else {"input_payloads": input_payload_hash}),
         },
         output_paths={} if output_paths is None else dict(sorted(output_paths.items())),
         parent_artifacts=tuple(sorted(str(item) for item in parent_artifacts)),
@@ -695,6 +717,7 @@ def benchmark(
             "model_fingerprint": model_fingerprint,
             "profiler_config_hash": config_hash,
             "result_digest": run_digest,
+            **({} if input_payload_hash is None else {"input_payload_hash": input_payload_hash}),
             **{f"profiler_config.{key}": _metadata_scalar(value) for key, value in canonical_profiler_config.items()},
         },
     )
@@ -702,6 +725,8 @@ def benchmark(
         manifest=manifest,
         topology=ordered_topology,
         activation_stats=activation_stats,
+        profiler_config=canonical_profiler_config,
+        input_payload_hash=input_payload_hash,
     )
 
 
