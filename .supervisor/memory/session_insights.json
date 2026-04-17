@@ -14,5 +14,13 @@
       "bootstrap-typed-package-entrypoints-and-cli-scaffold"
     ],
     "timestamp": "2026-04-17T04:31:12.756Z"
+  },
+  {
+    "taskTitle": "Create backend protocol, registry, and diagnostic domain errors",
+    "summary": "[Define backend interfaces and protocol types]: Fixed and committed as `83faeb7` (`fix: address verify issues - restore lazy registry alias`).\n\n1. Issue fixes\n- Restored PM criterion 6 without reintroducing the cycle. In [backend.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/models/backend.p",
+    "tags": [
+      "create-backend-protocol,-registry,-and-diagnostic-domain-errors"
+    ],
+    "timestamp": "2026-04-17T05:11:35.664Z"
   }
 ]
