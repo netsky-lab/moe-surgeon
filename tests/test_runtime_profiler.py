@@ -681,6 +681,7 @@ def test_iter_prompt_batches_uses_attention_mask_for_active_token_counts() -> No
     }
 
 
+@pytest.mark.integration
 def test_router_activation_profiler_matches_live_gemma4_router_contract() -> None:
     _require_live_gemma4_runtime()
 

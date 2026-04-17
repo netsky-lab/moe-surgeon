@@ -44,4 +44,13 @@ warn_return_any = true
 warn_unused_configs = true
 
 [tool.pytest.ini_options]
-addopts = ["--disable-plugin-autoload", "--basetemp=.tmp/pytest"]
+addopts = [
+  "--disable-plugin-autoload",
+  "--basetemp=.tmp/pytest",
+  "--strict-markers",
+  "-m",
+  "not integration",
+]
+markers = [
+  "integration: opt-in tests that may access live external services or model artifacts",
+]

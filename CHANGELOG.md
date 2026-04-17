@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Moved the live Gemma4 router-contract coverage in
+  `tests/test_runtime_profiler.py` behind a registered `integration` marker,
+  updated `pyproject.toml` so plain `python -m pytest` deselects integration
+  tests by default, added regression coverage in `tests/test_repo_metrics.py`
+  for default deselection plus explicit `-m integration` selection, and
+  updated `README.md`/`AGENTS.md` to document the marker-based opt-in command.
 - Added a Gemma4 packaging-floor regression in `tests/test_models_gemma4.py`
   that asserts the backend-owned `transformers>=5.5.0` runtime contract matches
   both `pyproject.toml` and the checked-in generated packaging metadata

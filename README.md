@@ -100,9 +100,13 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Run `npm run typecheck` for the `python -m mypy src` gate.
 - Run `npm test` for the `python -m pytest` suite.
 - The repo pytest config disables globally installed pytest entry-point plugin
-  autoload and pins `--basetemp=.tmp/pytest`, so `python -m pytest` and
+  autoload, pins `--basetemp=.tmp/pytest`, and deselects the registered
+  `integration` marker by default, so `python -m pytest` and
   `python -m moe_surgeon.repo_metrics --check tests` execute the repo suite
   without ambient plugin imports and with a repo-managed pytest temp root.
+- Run `python -m pytest -m integration tests/test_runtime_profiler.py -k live_gemma4`
+  to opt into the pinned live Gemma4 coverage when you explicitly want the
+  Hugging Face-backed runtime-contract test.
 - When the host temp directory environment is missing or points to an unusable
   location, test subprocesses fall back to the repo-managed `.tmp/pytest`
   directory.

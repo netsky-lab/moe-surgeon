@@ -48,4 +48,4 @@ Use explicit domain errors with context:
 - python -m ruff check src tests
 - python -m mypy src
 - python -m pytest
-- Optional: python -m pytest -k integration
+- Optional: python -m pytest -m integration

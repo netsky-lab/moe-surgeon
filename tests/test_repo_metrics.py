@@ -88,6 +88,17 @@ def _run_repo_metrics(
     )
 
 
+def _run_repo_pytest(*args: str) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", *args],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+
 def test_supervisor_verify_config_uses_repo_metrics_entrypoint() -> None:
     verify_config = _load_supervisor_verify_config()
     metrics_config = _load_repo_metrics_config()
@@ -118,6 +129,45 @@ def test_repo_pytest_config_disables_plugin_autoload_and_uses_repo_basetemp() ->
     assert 'pytest>=8.4' in pyproject_text
     assert '--disable-plugin-autoload' in pyproject_text
     assert '--basetemp=.tmp/pytest' in pyproject_text
+    assert '--strict-markers' in pyproject_text
+    assert 'not integration' in pyproject_text
+    assert 'integration: opt-in tests that may access live external services or model artifacts' in (
+        pyproject_text
+    )
+
+
+def test_default_python_m_pytest_deselects_integration_marker() -> None:
+    result = _run_repo_pytest(
+        "-q",
+        "tests/test_runtime_profiler.py",
+        "-k",
+        (
+            "test_router_activation_profiler_matches_live_gemma4_router_contract "
+            "or test_live_gemma4_signature_preserves_pinned_revision"
+        ),
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    combined_output = result.stdout + result.stderr
+    assert "1 passed" in combined_output
+    assert "19 deselected" in combined_output
+
+
+def test_explicit_python_m_pytest_m_integration_selects_live_gemma4_test() -> None:
+    result = _run_repo_pytest(
+        "--collect-only",
+        "-q",
+        "-m",
+        "integration",
+        "tests/test_runtime_profiler.py",
+        "-k",
+        "test_router_activation_profiler_matches_live_gemma4_router_contract",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    combined_output = result.stdout + result.stderr
+    assert "test_router_activation_profiler_matches_live_gemma4_router_contract" in combined_output
+    assert "1/20 tests collected (19 deselected)" in combined_output
 
 
 def test_ci_workflow_runs_repo_metrics_entrypoint() -> None:
