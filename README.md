@@ -1,9 +1,86 @@
 # moe-surgeon
 
-CLI tool for analyzing and pruning Mixture-of-Experts (MoE) models.
+moe-surgeon is a Python-first CLI for analyzing and pruning Mixture-of-Experts (MoE) models with reproducible, auditable behavior.
 
-Target: Gemma 4 26B-A4B (128 experts, 8 active per token).
+## Mission
 
-## Goal
+Identify low-utility experts and produce smaller checkpoints without editing source weights in place.
 
-Find dead-weight experts in MoE models and remove them to reduce model size without quality loss.
+## Primary target
+
+- Model: Gemma 4 26B-A4B
+- Architecture: Gemma4ForConditionalGeneration
+- Text transformer layers: 30
+- Experts per MoE layer: 128
+- Top-k experts per token: 8
+
+## Research-backed architecture notes
+
+### Gemma4 topology
+
+The target checkpoint uses text_config and a MoE-enabled decoder stack with:
+
+- num_hidden_layers: 30
+- enable_moe_block: true
+- num_experts: 128
+- top_k_experts: 8
+- moe_intermediate_size: 704
+- hidden_size: 2816
+- intermediate_size: 2112
+
+Gemma4 text layers are hybrid: dense FFN modules are present and MoE experts are integrated alongside routing paths.
+
+### Router mechanism
+
+Behavior is a top-k soft routing pattern:
+
+1. Project token hidden states to expert logits.
+2. Apply normalization and scale.
+3. Softmax over experts.
+4. Keep top_k_experts outputs.
+5. Reweight and apply per_expert_scale.
+
+### Key checkpoint key families
+
+Observed key families for the Gemma4 language stack:
+
+- model.language_model.layers.{L}.router.proj.weight
+- model.language_model.layers.{L}.router.scale
+- model.language_model.layers.{L}.router.per_expert_scale
+- model.language_model.layers.{L}.experts.gate_up_proj
+- model.language_model.layers.{L}.experts.down_proj
+
+This pattern supports deterministic topology discovery and safe remapping.
+
+## Canonical data schema
+
+All modules use shared dataclasses in src/moe_surgeon/schemas.py before any tensor mutation:
+
+- ModelHandle
+- LayerTopology
+- RouterState
+- ExpertStats
+- ActivationStats
+- PruneCandidate
+- PrunePlanItem
+- PrunePlan
+- RunArtifactManifest
+
+All ranking is deterministic with tie-breakers on score, secondary metric, and expert index.
+
+## Module structure
+
+- cli/: command graph and orchestration (scan, bench, prune, export)
+- models/: backend adapters and topology/contracts
+- analysis/: static router analysis
+- runtime/: forward hook profiler
+- prune/: strategy and plan generation (selection only)
+- export/: artifact persistence and manifest output
+
+## Safety and reproducibility policy
+
+- Never mutate source checkpoints.
+- Write all outputs to a new artifact path.
+- Validate expert index mapping before and after prune operations.
+- Deterministic sorting and stable serialization for all manifests.
+- Strict shape diagnostics before write-back.
