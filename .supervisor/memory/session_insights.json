@@ -62,5 +62,13 @@
       "replace-the-synthetic-collector-regression-with-a-repo-config-integration-test"
     ],
     "timestamp": "2026-04-17T08:50:41.135Z"
+  },
+  {
+    "taskTitle": "Add a CLI version smoke test",
+    "summary": "Implemented the CLI version smoke test in [tests/test_cli.py](/home/netsky/dev/labs/moe-surgeon/tests/test_cli.py) and added a matching changelog note in [CHANGELOG.md](/home/netsky/dev/labs/moe-surgeon/CHANGELOG.md). The new test runs both `python -m moe_surgeon --version` and the installed `moe-su",
+    "tags": [
+      "add-a-cli-version-smoke-test"
+    ],
+    "timestamp": "2026-04-17T09:00:17.422Z"
   }
 ]
