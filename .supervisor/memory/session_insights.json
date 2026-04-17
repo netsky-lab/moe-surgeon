@@ -126,5 +126,13 @@
       "lock-live-skip-diagnostics-to-the-shared-runtime-contract"
     ],
     "timestamp": "2026-04-17T15:07:13.282Z"
+  },
+  {
+    "taskTitle": "Add explicit missing-symbol live-gate regression",
+    "summary": "**Changed**\nModified [tests/test_runtime_profiler.py](/home/netsky/dev/labs/moe-surgeon/tests/test_runtime_profiler.py) to add a second `_require_live_gemma4_runtime()` regression for the supported-floor-but-missing-symbol branch. It simulates `transformers 5.5.4` lacking `Gemma4ForConditionalGenera",
+    "tags": [
+      "add-explicit-missing-symbol-live-gate-regression"
+    ],
+    "timestamp": "2026-04-17T15:17:18.620Z"
   }
 ]
