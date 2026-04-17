@@ -46,5 +46,13 @@
       "fix-the-real-supervisor-metrics-path-so-typecheck-is-collected"
     ],
     "timestamp": "2026-04-17T08:37:32.300Z"
+  },
+  {
+    "taskTitle": "Fix the real supervisor metrics path so typecheck is collected",
+    "summary": "Fixed both issues by regenerating the stored task-level authoritative metrics from the supervisor’s current verify config and replacing the stale task log entry. The task endpoint now reports `3/3` with `lint`, `typecheck`, and `test_suite`, and [.supervisor/logs/task-97333f84.log](/home/netsky/dev/",
+    "tags": [
+      "fix-the-real-supervisor-metrics-path-so-typecheck-is-collected"
+    ],
+    "timestamp": "2026-04-17T08:38:20.715Z"
   }
 ]
