@@ -16,6 +16,31 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T10:52:04.282Z"
+        },
+        {
+          "approach": "Fixed all five requested planner/test issues in commit `06b652c` (`fix: harden prune planner constraint validation`).\n\n`src/moe_surgeon/prune/planner.py` now rejects non-integer constraint counts up front, rejects non-integer/invalid `layer_overrides` keys and non-`LayerConstraintOverride` values in",
+          "success": false,
+          "error": "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_experts=2)` and `LayerConstraintOverride(target_experts=3, max_experts=2)` both build plans successfully, so invalid target sizes are not rejected early and the emitted `PrunePlan.constraints` can contradict the actual survivor budget. Reject `target_experts` when it falls outside override-local `min_experts`/`max_experts` and the resolved layer bounds.",
+            "`tests/test_prune_planner.py:341-394` covers zero/invalid scalar payloads and `target_experts < min_experts_per_layer`, but it does not cover `target_experts < override.min_experts` or `target_experts > override.max_experts`. Add regressions for both cases and assert an explicit validation error so this acceptance gap cannot pass with a green suite again."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T13:06:40.011Z"
+        },
+        {
+          "approach": "[Define strategy protocol and registry]: Fixed both requested issues in commit `3504db6` (`fix: address verify issues - exact target bounds`).\n\nIn [planner.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/prune/planner.py:41), `LayerConstraintOverride.__post_init__` now rejects contradictory ex",
+          "success": false,
+          "error": "PM verification criterion is unmet: the tree does not contain tracked `src/moe_surgeon/prune/strategy.py`; only `src/moe_surgeon/prune/strategies.py` exists (`ls src/moe_surgeon/prune`). Add the reque",
+          "verifyConfidence": 96,
+          "issues": [
+            "PM verification criterion is unmet: the tree does not contain tracked `src/moe_surgeon/prune/strategy.py`; only `src/moe_surgeon/prune/strategies.py` exists (`ls src/moe_surgeon/prune`). Add the requested module or a compatibility wrapper and wire it through `src/moe_surgeon/prune/__init__.py`.",
+            "`PrunePlan.constraints` can still disagree with the actual survivor bounds. `PlannerConstraints.plan_constraints()` copies raw user inputs (`src/moe_surgeon/prune/planner.py:135-152`), and `build_prune_plan()` stores that raw map in the emitted plan (`src/moe_surgeon/prune/planner.py:493-514`) even though `_layer_budgets()` resolves/clips bounds against topology (`src/moe_surgeon/prune/planner.py:241-299`). Reproduced locally: with two 3-expert layers and `max_experts_per_layer=10`, the plan serialized `{\"max_experts_per_layer\": 10}` while metadata reported `layer_0_maximum_keep=3` and `layer_1_maximum_keep=3`. The plan output should serialize resolved constraints or otherwise make `constraints` match the actual plan.",
+            "Test coverage misses the clipped-constraint regression. `tests/test_prune_planner.py:532-548` verifies byte-identical output and one unclipped override case, but there is no assertion that clipped global/per-layer limits are reflected consistently between `PrunePlan.constraints` and resolved budget metadata. Add a regression that fails on the reproduced `max_experts_per_layer=10` case before fixing the planner."
+          ],
+          "session": 3,
+          "timestamp": "2026-04-17T13:48:13.501Z"
         }
       ],
       "stuckSince": null
@@ -33,6 +58,20 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T11:24:11.244Z"
+        },
+        {
+          "approach": "Fixed the two requested issues.\n\n`src/moe_surgeon/prune/apply.py` now exists as the required public P8 module and re-exports `ApplyResult` / `apply_prune_plan` from the existing engine. `src/moe_surgeon/prune/__init__.py` now exports through that public path, and `CHANGELOG.md` records the delivered",
+          "success": false,
+          "error": "Lint is still red: `python -m ruff check src tests` and `python -m moe_surgeon.repo_metrics --check lint` both fail on the unused `LayerTopology` import at `tests/test_prune_apply.py:7`. Remove that i",
+          "verifyConfidence": 96,
+          "issues": [
+            "Lint is still red: `python -m ruff check src tests` and `python -m moe_surgeon.repo_metrics --check lint` both fail on the unused `LayerTopology` import at `tests/test_prune_apply.py:7`. Remove that import so the required quality gate passes.",
+            "The required test gate is still red: `python -m pytest -q` and `python -m moe_surgeon.repo_metrics --check tests` both fail at `tests/test_models_gemma4.py:343-353`. In this environment `transformers=5.5.4`, and current Hugging Face docs show Gemma4 support was added on 2026-04-01, so `Gemma4Backend.load()` at `src/moe_surgeon/models/gemma4.py:94-132` reaches real `from_pretrained()` calls instead of raising `UnsupportedModelError`, then fails on a live Hub 401/OSError. Make that test deterministic by monkeypatching missing runtime support, or change the backend to wrap remote load failures in an actionable domain error.",
+            "The P8 failure-case matrix is not fully covered yet. `tests/test_prune_applier.py:224-308` covers missing layer coverage, shape mismatches, and topology-count contradictions, but it does not explicitly test a plan containing an unknown extra layer index, and it does not exercise the `required prune tensor is missing from state_dict` branch in `src/moe_surgeon/prune/applier.py:540-558`. Add regressions for both to satisfy the PM checklist.",
+            "Dry-run determinism is present in manual verification but not pinned by an automated regression. I ran repeated `apply_prune_plan(..., dry_run=True)` calls locally and got identical `apply_id`, manifest JSON, and audit JSON, but there is no test asserting that acceptance point. Add one so the deterministic contract stays enforced."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T13:21:10.120Z"
         }
       ],
       "stuckSince": null
@@ -56,19 +95,18 @@
       ],
       "stuckSince": null
     },
-    "a67057c7-3bed-4461-bdd2-a9d6d3f0b5e8": {
+    "a5e9e56c-d005-458d-95e3-c9f27c551a4d": {
       "attempts": [
         {
-          "approach": "**Changed**\n- [tests/test_runtime_profiler.py](/home/netsky/dev/labs/moe-surgeon/tests/test_runtime_profiler.py) now includes a capability-gated live integration test that pins `tiny-random/gemma-4-moe@4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, loads the real model through `Gemma4Backend`, runs one ",
+          "approach": "**What changed**\n\nUpdated `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, and `CHANGELOG.md` so they match the actual checked-in tree. The docs now explicitly separate current implementation from future work: schemas/backend/scan/runtime/repo-metrics are present, `cli/main.py` is still placeholder wir",
           "success": false,
-          "error": "`tests/test_runtime_profiler.py:155-167` does not preserve the declared fixture pin. `_live_gemma4_signature()` downloads `config.json` at revision `4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, but `Bac",
+          "error": "`tests/test_docs_consistency.py:18-25` does not verify the checked-in implementation state required by the task. `_tracked_repo_paths()` uses `rg --files src tests`, which enumerates any filesystem en",
           "verifyConfidence": 97,
           "issues": [
-            "`tests/test_runtime_profiler.py:155-167` does not preserve the declared fixture pin. `_live_gemma4_signature()` downloads `config.json` at revision `4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, but `BackendSignature.from_mapping()` drops that revision because the downloaded config lacks `_commit_hash`/`revision`. `Gemma4Backend.load()` then calls `from_pretrained(..., revision=signature.revision)` with `None` at `src/moe_surgeon/models/gemma4.py:132-136`, so the live test can silently load repo HEAD instead of the pinned snapshot. Build the signature with `revision=_LIVE_GEMMA4_REVISION` explicitly, or otherwise guarantee the exact revision is carried into `backend.load()`.",
-            "`tests/test_runtime_profiler.py:588-599` under-tests the generation path. After `generate()`, the test only checks batch size, a minimum record count, and that some aggregated token count is positive. It does not assert the router output contract for generation records: complete layer coverage, `top_k_indices`/`top_k_weights` last-dimension checks against `router_state.top_k`, `router_scores` presence, and `router_scores` last-dimension checks against `router_state.num_experts`. Strengthen the generation assertions to match the forward-path contract so the end-to-end live profiler test actually fails on malformed or partial generation captures."
+            "`tests/test_docs_consistency.py:18-25` does not verify the checked-in implementation state required by the task. `_tracked_repo_paths()` uses `rg --files src tests`, which enumerates any filesystem entry under `src/`/`tests`, including untracked or generated files. I verified this by creating an untracked probe file under `src/`; `rg --files` reported it while `git ls-files src tests` did not. Replace this with a checked-in-only source such as `git ls-files -- src tests`, and keep the regression scoped to tracked paths so stale doc references cannot be masked by local untracked files."
           ],
           "session": 1,
-          "timestamp": "2026-04-17T12:19:01.761Z"
+          "timestamp": "2026-04-17T12:39:25.409Z"
         }
       ],
       "stuckSince": null
@@ -76,6 +114,6 @@
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T12:19:01.761Z"
+    "lastUpdated": "2026-04-17T14:27:02.343Z"
   }
 }
