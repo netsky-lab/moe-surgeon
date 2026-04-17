@@ -111,6 +111,7 @@ def test_bench_command_accepts_prompt_batching_options() -> None:
 
     assert result.returncode == 0
     assert "prompt_inputs=2" in result.stdout
+    assert "prompt_batches=1" in result.stdout
     assert "batch_size=2" in result.stdout
     assert "seed=7" in result.stdout
     assert "capture_router_scores=true" in result.stdout

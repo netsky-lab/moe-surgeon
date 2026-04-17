@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from math import log
 from types import TracebackType
-from typing import Callable, Iterable, Literal, Mapping, MutableSequence, Protocol, Sequence, cast
+from typing import Callable, Iterable, Iterator, Literal, Mapping, MutableSequence, Protocol, Sequence, cast
 
 from moe_surgeon.models.backend import LoadedBackendBundle, ModelBackend
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
@@ -82,6 +82,26 @@ class BenchmarkResult:
         }
 
 
+@dataclass(frozen=True)
+class PromptBatch:
+    """Tokenizer-ready prompt batch used by the offline-safe bench flow."""
+
+    prompts: tuple[str, ...]
+    prompt_indices: tuple[int, ...]
+    encoded_inputs: Mapping[str, object]
+    attention_mask: object
+    active_token_count: int
+
+    def prompt_payload(self) -> dict[str, object]:
+        """Return a canonical JSON-ready batch summary."""
+
+        return {
+            "prompts": list(self.prompts),
+            "prompt_indices": list(self.prompt_indices),
+            "active_token_count": self.active_token_count,
+        }
+
+
 class RouterActivationProfiler:
     """Context-managed router hook profiler with deterministic layer ordering."""
 
@@ -104,6 +124,7 @@ class RouterActivationProfiler:
         self._router_states: dict[int, RouterState] = {}
         self._aggregates: dict[int, dict[int, _ExpertAccumulator]] = {}
         self._layer_token_totals: dict[int, int] = {}
+        self._layer_weight_totals: dict[int, float] = {}
         self._layer_topology = {layer.layer_index: layer for layer in self._topology}
 
     @property
@@ -185,6 +206,7 @@ class RouterActivationProfiler:
 
         self._aggregates.clear()
         self._layer_token_totals.clear()
+        self._layer_weight_totals.clear()
 
     def accumulate(
         self,
@@ -211,6 +233,7 @@ class RouterActivationProfiler:
             indices_data = self._to_python_nested(record.top_k_indices)
             weights_data = self._to_python_nested(record.top_k_weights)
             active_positions = 0
+            active_weight_total = 0.0
             for rank_indices, rank_weights in self._iter_active_positions(
                 indices_data=indices_data,
                 weights_data=weights_data,
@@ -219,10 +242,12 @@ class RouterActivationProfiler:
                 router_state=router_state,
             ):
                 active_positions += 1
+                position_weight_total = 0.0
                 layer_aggregate = self._aggregates.setdefault(layer.layer_index, {})
                 for rank, (raw_expert_index, raw_weight) in enumerate(zip(rank_indices, rank_weights)):
                     expert_index = self._coerce_expert_index(raw_expert_index, layer=layer)
                     weight = self._coerce_weight(raw_weight, layer=layer)
+                    position_weight_total += weight
                     aggregate = layer_aggregate.setdefault(expert_index, _ExpertAccumulator())
                     aggregate.token_count += 1
                     aggregate.weighted_token_count += weight
@@ -231,7 +256,9 @@ class RouterActivationProfiler:
                         aggregate.entropy_sum += -weight * log(weight)
                     if rank == 0:
                         aggregate.top1_mass += weight
+                active_weight_total += position_weight_total
             self._layer_token_totals[layer.layer_index] = self._layer_token_totals.get(layer.layer_index, 0) + active_positions
+            self._layer_weight_totals[layer.layer_index] = self._layer_weight_totals.get(layer.layer_index, 0.0) + active_weight_total
         stats = self.activation_stats()
         if clear_records:
             self.clear_records()
@@ -245,6 +272,7 @@ class RouterActivationProfiler:
         stats: list[ActivationStats] = []
         for layer in self._topology:
             n_tokens = self._layer_token_totals.get(layer.layer_index, 0)
+            weighted_n_tokens = self._layer_weight_totals.get(layer.layer_index, 0.0)
             layer_aggregate = self._aggregates.get(layer.layer_index, {})
             for expert_index in range(layer.expert_count):
                 aggregate = layer_aggregate.get(expert_index, _ExpertAccumulator())
@@ -263,6 +291,7 @@ class RouterActivationProfiler:
                         mean_weight=mean_weight,
                         entropy=entropy,
                         n_tokens=n_tokens,
+                        weighted_n_tokens=weighted_n_tokens,
                         top1_mass=aggregate.top1_mass,
                         density=density,
                     )
@@ -676,6 +705,38 @@ def benchmark(
     )
 
 
+def iter_prompt_batches(
+    *,
+    tokenizer: Callable[..., object],
+    prompts: Sequence[str],
+    batch_size: int,
+    tokenizer_kwargs: Mapping[str, object] | None = None,
+) -> Iterator[PromptBatch]:
+    """Yield deterministic prompt batches with explicit attention-mask totals."""
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be >= 1")
+    kwargs: dict[str, object] = {"padding": True, "return_attention_mask": True}
+    if tokenizer_kwargs is not None:
+        kwargs.update(dict(tokenizer_kwargs))
+
+    for batch_start in range(0, len(prompts), batch_size):
+        batch_prompts = tuple(prompts[batch_start : batch_start + batch_size])
+        batch_indices = tuple(range(batch_start, batch_start + len(batch_prompts)))
+        encoded = _normalize_tokenizer_output(tokenizer(batch_prompts, **kwargs))
+        attention_mask = encoded.get("attention_mask")
+        if attention_mask is None:
+            raise ShapeInvariantViolationError("tokenizer output must include attention_mask")
+        active_token_count = _count_mask_tokens(attention_mask)
+        yield PromptBatch(
+            prompts=batch_prompts,
+            prompt_indices=batch_indices,
+            encoded_inputs=encoded,
+            attention_mask=attention_mask,
+            active_token_count=active_token_count,
+        )
+
+
 def _canonical_json_mapping(payload: Mapping[str, object]) -> dict[str, object]:
     normalized: dict[str, object] = {}
     for key, value in sorted(payload.items()):
@@ -706,9 +767,40 @@ def _metadata_scalar(value: object) -> str | int | float | bool | None:
     return str(value)
 
 
+def _normalize_tokenizer_output(output: object) -> dict[str, object]:
+    if isinstance(output, Mapping):
+        return {str(key): value for key, value in output.items()}
+    if hasattr(output, "__dict__"):
+        return {
+            str(key): value
+            for key, value in vars(output).items()
+            if not str(key).startswith("_")
+        }
+    raise ShapeInvariantViolationError("tokenizer output must be mapping or object")
+
+
+def _count_mask_tokens(mask: object) -> int:
+    candidate = mask
+    detach = getattr(candidate, "detach", None)
+    if callable(detach):
+        candidate = detach()
+    cpu = getattr(candidate, "cpu", None)
+    if callable(cpu):
+        candidate = cpu()
+    tolist = getattr(candidate, "tolist", None)
+    if callable(tolist):
+        candidate = tolist()
+    mask = candidate
+    if isinstance(mask, Sequence) and not isinstance(mask, (str, bytes)):
+        return sum(_count_mask_tokens(item) for item in mask)
+    return 1 if bool(mask) else 0
+
+
 __all__ = [
     "benchmark",
     "BenchmarkResult",
+    "iter_prompt_batches",
+    "PromptBatch",
     "RouterActivationProfiler",
     "RouterActivationRecord",
     "RouterCaptureCollector",

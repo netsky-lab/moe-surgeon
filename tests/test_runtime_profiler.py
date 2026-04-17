@@ -7,7 +7,7 @@ import pytest
 
 from moe_surgeon.models.backend import LoadedBackendBundle
 from moe_surgeon.models.errors import ShapeInvariantViolationError
-from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark
+from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 
 
@@ -64,6 +64,20 @@ class FakeBackend:
 
     def resolve_router_module(self, bundle: LoadedBackendBundle, *, layer: LayerTopology) -> FakeRouterModule:
         return self._modules[layer.layer_index]
+
+
+@dataclass
+class FakeTokenizer:
+    def __call__(self, prompts: tuple[str, ...], **_: object) -> dict[str, object]:
+        max_length = max(len(prompt) for prompt in prompts)
+        attention_mask = []
+        input_ids = []
+        for prompt in prompts:
+            token_count = len(prompt)
+            padding = max_length - token_count
+            attention_mask.append(([1] * token_count) + ([0] * padding))
+            input_ids.append(list(range(token_count)) + ([0] * padding))
+        return {"input_ids": input_ids, "attention_mask": attention_mask}
 
 
 def _layer(layer_index: int) -> LayerTopology:
@@ -183,6 +197,7 @@ def test_router_activation_profiler_aggregates_with_padding_mask() -> None:
     by_expert = {item.expert_index: item for item in stats if item.layer_index == 0}
     assert by_expert[0].token_count == 2
     assert by_expert[0].weighted_token_count == pytest.approx(0.8)
+    assert by_expert[0].weighted_n_tokens == pytest.approx(3.0)
     assert by_expert[0].top1_mass == pytest.approx(0.7)
     assert by_expert[1].token_count == 2
     assert by_expert[2].token_count == 1
@@ -213,6 +228,7 @@ def test_router_activation_profiler_aligns_generation_step_to_mask_tail() -> Non
 
     by_expert = {item.expert_index: item for item in stats if item.layer_index == 0}
     assert all(item.n_tokens == 1 for item in by_expert.values())
+    assert all(item.weighted_n_tokens == pytest.approx(1.0) for item in by_expert.values())
     assert by_expert[0].token_count == 1
     assert by_expert[1].token_count == 1
     assert by_expert[2].token_count == 0
@@ -262,3 +278,21 @@ def test_benchmark_builds_deterministic_manifest_and_sorted_stats() -> None:
         (0, 3),
     ]
     assert first.to_payload()["manifest"]["command"] == "bench"
+
+
+def test_iter_prompt_batches_uses_attention_mask_for_active_token_counts() -> None:
+    batches = list(
+        iter_prompt_batches(
+            tokenizer=FakeTokenizer(),
+            prompts=("ab", "c", "def"),
+            batch_size=2,
+        )
+    )
+
+    assert [batch.prompt_indices for batch in batches] == [(0, 1), (2,)]
+    assert [batch.active_token_count for batch in batches] == [3, 3]
+    assert batches[0].prompt_payload() == {
+        "prompts": ["ab", "c"],
+        "prompt_indices": [0, 1],
+        "active_token_count": 3,
+    }

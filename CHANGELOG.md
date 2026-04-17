@@ -13,6 +13,20 @@
   `src/moe_surgeon/analysis/scan.py`.
 - Extended the lightweight CLI `bench` placeholder with prompt batching and
   profiler-option parsing in `src/moe_surgeon/cli/main.py`.
+- Extended `src/moe_surgeon/runtime/profiler.py` with deterministic prompt
+  batching helpers so bench flows can derive canonical attention-mask-aware
+  prompt batches without requiring live Gemma4 inference.
+- Tightened runtime activation aggregation to persist both unweighted
+  active-token totals (`n_tokens`) and weighted layer totals
+  (`weighted_n_tokens`) while continuing to mask out padding and
+  sequence-prefix positions.
+- Hardened `src/moe_surgeon/analysis/scan.py` validation so activation payloads
+  fail fast when per-layer weighted or unweighted totals disagree across
+  experts.
+- Updated the bench CLI placeholder to count newline-delimited prompt files
+  consistently with prompt batching.
+- Added offline regression coverage for prompt batching, weighted layer totals,
+  and scan-layer total consistency.
 - Added offline regression coverage in `tests/test_runtime_profiler.py`,
   `tests/test_analysis_scan.py`, `tests/test_models_gemma4.py`, `tests/test_cli.py`,
   and `tests/test_schemas.py` for hook cleanup, aggregation semantics, topology

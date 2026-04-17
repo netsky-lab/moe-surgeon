@@ -31,6 +31,8 @@ def align_activation_stats(
     """Validate activation stats against topology and return canonical ordering."""
 
     topology_index = build_layer_topology_index(layers)
+    layer_token_totals: dict[int, int] = {}
+    layer_weighted_totals: dict[int, float | None] = {}
     for item in stats:
         layer = topology_index.get(item.layer_index)
         if layer is None:
@@ -43,6 +45,30 @@ def align_activation_stats(
                 "activation stats expert index exceeds layer topology",
                 layer_index=item.layer_index,
                 details={"expert_index": item.expert_index, "expert_count": layer.expert_count},
+            )
+        existing_n_tokens = layer_token_totals.setdefault(item.layer_index, item.n_tokens)
+        if existing_n_tokens != item.n_tokens:
+            raise TopologyMismatchError(
+                "activation stats layer token totals are inconsistent",
+                layer_index=item.layer_index,
+                details={"expected_n_tokens": existing_n_tokens, "actual_n_tokens": item.n_tokens},
+            )
+        existing_weighted = layer_weighted_totals.setdefault(item.layer_index, item.weighted_n_tokens)
+        if existing_weighted is None:
+            if item.weighted_n_tokens is not None:
+                raise TopologyMismatchError(
+                    "activation stats layer weighted token totals are inconsistent",
+                    layer_index=item.layer_index,
+                    details={"expected_weighted_n_tokens": None, "actual_weighted_n_tokens": item.weighted_n_tokens},
+                )
+        elif item.weighted_n_tokens is None or abs(existing_weighted - item.weighted_n_tokens) > 1e-12:
+            raise TopologyMismatchError(
+                "activation stats layer weighted token totals are inconsistent",
+                layer_index=item.layer_index,
+                details={
+                    "expected_weighted_n_tokens": existing_weighted,
+                    "actual_weighted_n_tokens": item.weighted_n_tokens,
+                },
             )
     return sort_activation_stats(stats)
 

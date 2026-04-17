@@ -39,6 +39,7 @@ def test_align_activation_stats_rejects_unknown_layer() -> None:
                     mean_weight=0.0,
                     entropy=0.0,
                     n_tokens=0,
+                    weighted_n_tokens=0.0,
                 )
             ],
         )
@@ -58,6 +59,38 @@ def test_align_activation_stats_rejects_out_of_range_expert() -> None:
                     mean_weight=0.0,
                     entropy=0.0,
                     n_tokens=0,
+                    weighted_n_tokens=0.0,
                 )
+            ],
+        )
+
+
+def test_align_activation_stats_rejects_inconsistent_layer_weighted_totals() -> None:
+    with pytest.raises(TopologyMismatchError, match="weighted token totals are inconsistent"):
+        align_activation_stats(
+            layers=[_layer(0)],
+            stats=[
+                ActivationStats(
+                    layer_index=0,
+                    expert_index=0,
+                    token_count=1,
+                    weighted_token_count=0.7,
+                    mass_sum=0.7,
+                    mean_weight=0.7,
+                    entropy=0.0,
+                    n_tokens=1,
+                    weighted_n_tokens=1.0,
+                ),
+                ActivationStats(
+                    layer_index=0,
+                    expert_index=1,
+                    token_count=1,
+                    weighted_token_count=0.3,
+                    mass_sum=0.3,
+                    mean_weight=0.3,
+                    entropy=0.0,
+                    n_tokens=1,
+                    weighted_n_tokens=0.5,
+                ),
             ],
         )
