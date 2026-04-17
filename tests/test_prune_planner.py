@@ -564,7 +564,13 @@ def test_plan_constraints_reflect_resolved_clipped_layer_bounds() -> None:
     assert plan.constraints["global_target_experts"] == 4
     assert plan.constraints["min_experts_per_layer"] == 1
     assert plan.constraints["max_experts_per_layer"] == 3
+    assert plan.metadata["layer_0_minimum_keep"] == 1
+    assert plan.metadata["layer_1_minimum_keep"] == 1
     assert plan.metadata["layer_0_maximum_keep"] == 3
     assert plan.metadata["layer_1_maximum_keep"] == 3
+    assert plan.constraints["min_experts_per_layer"] == plan.metadata["layer_0_minimum_keep"]
+    assert plan.constraints["min_experts_per_layer"] == plan.metadata["layer_1_minimum_keep"]
+    assert plan.constraints["max_experts_per_layer"] == plan.metadata["layer_0_maximum_keep"]
+    assert plan.constraints["max_experts_per_layer"] == plan.metadata["layer_1_maximum_keep"]
     assert "layer_0_max_experts" not in plan.constraints
     assert "layer_1_max_experts" not in plan.constraints

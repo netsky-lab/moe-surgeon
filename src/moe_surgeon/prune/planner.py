@@ -151,13 +151,13 @@ class PlannerConstraints:
         if budgets is None:
             if self.max_experts_per_layer is not None:
                 flattened["max_experts_per_layer"] = self.max_experts_per_layer
-            for layer_index, override in self.layer_overrides.items():
-                if override.target_experts is not None:
-                    flattened[f"layer_{layer_index}_target_experts"] = override.target_experts
-                if override.min_experts is not None:
-                    flattened[f"layer_{layer_index}_min_experts"] = override.min_experts
-                if override.max_experts is not None:
-                    flattened[f"layer_{layer_index}_max_experts"] = override.max_experts
+            for layer_index, layer_override in self.layer_overrides.items():
+                if layer_override.target_experts is not None:
+                    flattened[f"layer_{layer_index}_target_experts"] = layer_override.target_experts
+                if layer_override.min_experts is not None:
+                    flattened[f"layer_{layer_index}_min_experts"] = layer_override.min_experts
+                if layer_override.max_experts is not None:
+                    flattened[f"layer_{layer_index}_max_experts"] = layer_override.max_experts
             return flattened
 
         uniform_global_max: int | None = None
@@ -171,8 +171,8 @@ class PlannerConstraints:
 
         for budget in budgets:
             layer_index = budget.layer.layer_index
-            override = self.layer_overrides.get(layer_index)
-            if override is not None and override.target_experts is not None:
+            resolved_override: LayerConstraintOverride | None = self.layer_overrides.get(layer_index)
+            if resolved_override is not None and resolved_override.target_experts is not None:
                 flattened[f"layer_{layer_index}_target_experts"] = budget.minimum_keep
                 continue
             if budget.minimum_keep != self.min_experts_per_layer:
