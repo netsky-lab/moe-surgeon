@@ -11,6 +11,7 @@ src/moe_surgeon.egg-info/entry_points.txt
 src/moe_surgeon.egg-info/requires.txt
 src/moe_surgeon.egg-info/top_level.txt
 src/moe_surgeon/analysis/__init__.py
+src/moe_surgeon/analysis/metrics.py
 src/moe_surgeon/analysis/scan.py
 src/moe_surgeon/cli/__init__.py
 src/moe_surgeon/cli/main.py

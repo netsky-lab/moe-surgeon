@@ -88,6 +88,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 ## CLI bootstrap
 
 - Install in editable mode with `python -m pip install -e .`.
+- Gemma4 execution requires `transformers>=5.5.0`. Hugging Face documents
+  Gemma4 support as added on 2026-04-01, and the first PyPI release carrying
+  that support is `transformers 5.5.0` from 2026-04-02.
 - Run help with `python -m moe_surgeon --help` or the installed `moe-surgeon --help` script.
 - The bootstrap CLI exposes placeholder `scan`, `bench`, `prune`, and `export` commands without importing model/runtime backends during help parsing.
 

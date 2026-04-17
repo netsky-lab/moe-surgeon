@@ -24,6 +24,8 @@ _BACKEND_VERSION = "1.0.0"
 _SUPPORTED_MODEL_TYPE = "gemma4"
 _SUPPORTED_ARCHITECTURE = "Gemma4ForConditionalGeneration"
 _SUPPORT_ADDED_DATE = "2026-04-01"
+_MINIMUM_TRANSFORMERS_VERSION = "5.5.0"
+_MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE = "2026-04-02"
 _DEFAULT_LAYER_PREFIX = "model.language_model.layers.{layer_index}"
 DEFAULT_REGISTRY_PRIORITY = 100
 _REQUIRED_LAYER_KEYS = {
@@ -104,28 +106,24 @@ class Gemma4Backend:
                     "backend_name": self.name,
                     "reason": "transformers import failed",
                     "source": source,
+                    "minimum_transformers_version": _MINIMUM_TRANSFORMERS_VERSION,
+                    "minimum_transformers_pypi_release_date": _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
                     "support_added_on": _SUPPORT_ADDED_DATE,
+                    "guidance": self._upgrade_guidance(),
                 },
             ) from exc
 
+        self._validate_transformers_runtime_support(
+            signature=signature,
+            installed_transformers_version=transformers_version,
+            transformers_module=transformers_module,
+            source=source,
+        )
+
         model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
         tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
-        if model_class is None or tokenizer_class is None:
-            raise UnsupportedModelError(
-                signature.model_id,
-                available_backends=(self.name,),
-                details={
-                    "backend_name": self.name,
-                    "installed_transformers_version": transformers_version or "unknown",
-                    "required_symbol": _SUPPORTED_ARCHITECTURE,
-                    "support_added_on": _SUPPORT_ADDED_DATE,
-                    "guidance": (
-                        "Upgrade transformers to a release published on or after "
-                        f"{_SUPPORT_ADDED_DATE} with Gemma4 support."
-                    ),
-                    "source": source,
-                },
-            )
+        assert model_class is not None
+        assert tokenizer_class is not None
 
         torch_module = import_module("torch")
         resolved_dtype = self._resolve_torch_dtype(torch_module, dtype)
@@ -514,6 +512,76 @@ class Gemma4Backend:
         if not isinstance(text_config, Mapping):
             raise TopologyMismatchError("Gemma4 config must include text_config mapping")
         return text_config
+
+    def _validate_transformers_runtime_support(
+        self,
+        *,
+        signature: BackendSignature,
+        installed_transformers_version: str | None,
+        transformers_module: object,
+        source: str,
+    ) -> None:
+        normalized_version = installed_transformers_version or "unknown"
+        if not self._is_supported_transformers_version(installed_transformers_version):
+            raise UnsupportedModelError(
+                signature.model_id,
+                available_backends=(self.name,),
+                details={
+                    "backend_name": self.name,
+                    "installed_transformers_version": normalized_version,
+                    "minimum_transformers_version": _MINIMUM_TRANSFORMERS_VERSION,
+                    "minimum_transformers_pypi_release_date": _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
+                    "required_symbol": _SUPPORTED_ARCHITECTURE,
+                    "support_added_on": _SUPPORT_ADDED_DATE,
+                    "guidance": self._upgrade_guidance(),
+                    "source": source,
+                },
+            )
+
+        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
+        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
+        if model_class is None or tokenizer_class is None:
+            raise UnsupportedModelError(
+                signature.model_id,
+                available_backends=(self.name,),
+                details={
+                    "backend_name": self.name,
+                    "installed_transformers_version": normalized_version,
+                    "minimum_transformers_version": _MINIMUM_TRANSFORMERS_VERSION,
+                    "minimum_transformers_pypi_release_date": _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
+                    "required_symbol": _SUPPORTED_ARCHITECTURE,
+                    "support_added_on": _SUPPORT_ADDED_DATE,
+                    "guidance": (
+                        f"{self._upgrade_guidance()} If you already installed "
+                        f"transformers>={_MINIMUM_TRANSFORMERS_VERSION}, reinstall a standard Hugging Face "
+                        "transformers build because the Gemma4 symbols are missing."
+                    ),
+                    "source": source,
+                },
+            )
+
+    def _is_supported_transformers_version(self, version: str | None) -> bool:
+        if version is None:
+            return False
+        installed_parts = self._version_key(version)
+        required_parts = self._version_key(_MINIMUM_TRANSFORMERS_VERSION)
+        if installed_parts is None or required_parts is None:
+            return False
+        return installed_parts >= required_parts
+
+    def _version_key(self, version: str) -> tuple[int, int, int] | None:
+        match = re.match(r"^\s*(\d+)\.(\d+)\.(\d+)", version)
+        if match is None:
+            return None
+        major, minor, patch = match.groups()
+        return (int(major), int(minor), int(patch))
+
+    def _upgrade_guidance(self) -> str:
+        return (
+            f"Install transformers>={_MINIMUM_TRANSFORMERS_VERSION}. Gemma4 support was added on "
+            f"{_SUPPORT_ADDED_DATE} and first shipped on PyPI in {_MINIMUM_TRANSFORMERS_VERSION} "
+            f"({_MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE})."
+        )
 
     def _architecture(self, config: Mapping[str, object]) -> str | None:
         raw_architectures = config.get("architectures")

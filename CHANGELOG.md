@@ -161,3 +161,6 @@
 - Added schema-focused regression tests in `tests/test_schemas.py` for importability, deterministic sort behavior, and JSON compatibility.
 - Reworked canonical contract layer in `src/moe_surgeon/schemas.py` for explicit tie-safe comparators (`sort_experts`, `sort_plan_items`, `sort_topology`), epsilon-bucketed numeric ordering, strict shape/invariant validation, and deterministic JSON metadata envelopes.
 - Added additional schema regression tests for tie-breaking and nested manifest round-trip (`tests/test_schemas.py`).
+- Updated the Gemma4 runtime contract to require `transformers>=5.5.0`, the first PyPI release after Hugging Face documented Gemma4 support on 2026-04-01, and aligned the backend diagnostics to report the same minimum version, release date, and upgrade path.
+- Tightened `pyproject.toml` and `README.md` so package metadata and setup guidance no longer imply pre-5.5.0 Transformers releases are acceptable for Gemma4 execution.
+- Expanded `tests/test_models_gemma4.py` with offline regressions for below-floor runtime failures, missing-symbol failures at the supported floor, and a packaging-floor consistency check against `pyproject.toml`.
