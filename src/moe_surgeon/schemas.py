@@ -1,98 +1,89 @@
-"""Canonical schema contracts for MoE analysis and pruning.
+"""Canonical schema contracts for deterministic MoE analysis and pruning.
 
-This module defines lightweight, dependency-free dataclasses used by every
-pipeline stage before any tensor mutation. Every object is deterministic,
-serializable, and validates structural invariants on construction.
+All objects in this module are pure data containers with explicit validation,
+deterministic ordering helpers, and reversible JSON serialization.
+The module is intentionally free from runtime heavy dependencies such as
+``torch`` and ``transformers``.
 """
-
-# mypy: ignore-errors
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Mapping, Sequence, cast
-from typing import ClassVar
-from typing import Dict
-from typing import Iterable
-from typing import List
-from typing import Optional
-from typing import Tuple
-from typing import Type
-from typing import Union
-from typing import get_type_hints
-from typing import TypeVar
-from math import isfinite, floor
+from math import floor, isfinite
 from pathlib import Path
-from dataclasses import MISSING
+from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Sequence, Tuple, Type, TypeVar, Union, get_type_hints
 import json
 import re
 
-
 CANONICAL_SCHEMA_VERSION = "1.0.0"
 CANONICAL_FLOAT_EPSILON = 1e-12
-INT_SEQUENCE_ID_PATTERN = re.compile(r"^(?:layer|module)_([0-9]+)$")
+_LAYER_REF_PATTERNS = (re.compile(r"^layer_(\d+)$"), re.compile(r"^module_(\d+)$"))
 
 
 class SchemaValidationError(ValueError):
-    """Base validation error for schema and invariant failures."""
+    """Base error for schema and contract violations."""
 
 
 class ShapeInvariantViolationError(SchemaValidationError):
-    """Raised when tensor-shape-like metadata does not satisfy invariants."""
+    """Raised when tensor-like metadata is malformed."""
 
 
 class TopologyMismatchError(SchemaValidationError):
-    """Raised when topology or expert-count invariants are inconsistent."""
+    """Raised when topology-level invariants cannot be satisfied."""
 
 
 class LayerReferenceError(SchemaValidationError):
-    """Raised when a layer reference string does not match canonical form."""
+    """Raised when a layer reference string is invalid."""
 
 
 SchemaKey = Union[str, int, float, bool, None]
 ShapeTuple = Tuple[int, ...]
 
 
+SchemaType = TypeVar("SchemaType", bound="_SchemaBase")
+
+
 def _utcnow_iso() -> str:
-    """Return an RFC3339-style UTC timestamp in seconds precision."""
+    """Current UTC timestamp in stable ISO-8601 format."""
 
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def _ensure_bool(value: Any, *, name: str) -> bool:
-    """Validate that a field is exactly a boolean."""
-
     if not isinstance(value, bool):
-        raise SchemaValidationError(f"{name} must be bool, got {type(value).__name__}")
+        raise SchemaValidationError(f"{name} must be bool")
     return value
 
 
 def _ensure_non_negative_int(value: Any, *, name: str) -> int:
-    """Validate integer >= 0."""
-
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise SchemaValidationError(f"{name} must be int, got {type(value).__name__}")
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SchemaValidationError(f"{name} must be int")
     if value < 0:
-        raise SchemaValidationError(f"{name} must be non-negative, got {value}")
+        raise SchemaValidationError(f"{name} must be >= 0")
     return value
 
 
 def _ensure_positive_int(value: Any, *, name: str) -> int:
-    """Validate integer > 0."""
-
     value = _ensure_non_negative_int(value, name=name)
-    if value == 0:
-        raise SchemaValidationError(f"{name} must be > 0, got {value}")
-    return int(value)
+    if value <= 0:
+        raise SchemaValidationError(f"{name} must be > 0")
+    return value
+
+
+def _ensure_float(value: Any, *, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SchemaValidationError(f"{name} must be a number")
+    value_f = float(value)
+    if not isfinite(value_f):
+        raise SchemaValidationError(f"{name} must be finite")
+    return value_f
 
 
 def _ensure_non_empty_str(value: Any, *, name: str) -> str:
-    """Validate non-empty string."""
-
     if not isinstance(value, str) or not value.strip():
-        raise SchemaValidationError(f"{name} must be a non-empty string")
+        raise SchemaValidationError(f"{name} must be non-empty string")
     return value
 
 
@@ -108,64 +99,83 @@ def _ensure_optional_positive_int(value: Any, *, name: str) -> Optional[int]:
     return _ensure_positive_int(value, name=name)
 
 
-def _ensure_float(value: Any, *, name: str, finite: bool = True) -> float:
-    """Validate numeric float-like value."""
-
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SchemaValidationError(f"{name} must be a number")
-    if finite:
-        if not isfinite(float(value)):
-            raise SchemaValidationError(f"{name} must be finite, got {value}")
-    return float(value)
-
-
 def _ensure_shape_tuple(value: Any, *, name: str, allow_empty: bool = False) -> Optional[ShapeTuple]:
-    """Validate tensor-like shape metadata as tuple of positive ints."""
-
     if value is None:
         return None
     if isinstance(value, tuple):
-        values: Sequence[Any] = value
+        raw = value
     elif isinstance(value, list):
-        values = tuple(value)
+        raw = tuple(value)
     else:
-        raise ShapeInvariantViolationError(
-            f"{name} must be list/tuple of ints or None, got {type(value).__name__}"
-        )
-    if not allow_empty and len(values) == 0:
+        raise ShapeInvariantViolationError(f"{name} must be list or tuple")
+
+    if not allow_empty and len(raw) == 0:
         raise ShapeInvariantViolationError(f"{name} must be non-empty")
-    out: List[int] = []
-    for idx, dim in enumerate(values):
-        if not isinstance(dim, int) or isinstance(dim, bool) or dim < 0:
-            raise ShapeInvariantViolationError(
-                f"{name}[{idx}] must be non-negative int, got {dim!r}"
-            )
-        out.append(dim)
+
+    out: list[int] = []
+    for idx, item in enumerate(raw):
+        if isinstance(item, bool) or not isinstance(item, int) or item < 0:
+            raise ShapeInvariantViolationError(f"{name}[{idx}] must be non-negative int")
+        out.append(item)
     return tuple(out)
 
 
-def _parse_layer_reference(value: Any) -> int:
-    """Parse canonical layer references and return the numeric layer index."""
-
-    if not isinstance(value, str):
-        raise LayerReferenceError("layer_ref must be a string")
-    match = INT_SEQUENCE_ID_PATTERN.match(value)
-    if not match:
-        raise LayerReferenceError(
-            f"layer_ref '{value}' is invalid. Expected 'layer_<index>' or 'module_<index>'"
-        )
-    return int(match.group(1))
-
-
-def _float_sort_bucket(value: float, *, epsilon: float) -> float:
-    """Bucket float values into deterministic bins before sorting ties."""
-
-    epsilon = max(float(epsilon), CANONICAL_FLOAT_EPSILON)
-    scale = 1.0 / epsilon
-    return floor(value * scale + (0.5 if value >= 0 else -0.5)) / scale
+def _canonicalize_metadata(value: Mapping[str, Any] | None) -> Dict[str, SchemaKey]:
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise SchemaValidationError("metadata must be mapping")
+    out: Dict[str, SchemaKey] = {}
+    for key, val in value.items():
+        if not isinstance(key, str):
+            raise SchemaValidationError("metadata keys must be strings")
+        if isinstance(val, (str, int, float, bool)) or val is None:
+            out[key] = val
+        else:
+            raise SchemaValidationError("metadata values must be JSON scalar")
+    return out
 
 
-def _expert_sort_terms(
+def _canonicalize_int_tuple(values: Sequence[int] | None, *, name: str) -> Tuple[int, ...]:
+    if values is None:
+        return ()
+    out = []
+    for i, item in enumerate(values):
+        try:
+            out.append(_ensure_non_negative_int(item, name=f"{name}[{i}]"))
+        except SchemaValidationError as exc:
+            raise SchemaValidationError(f"{name} contains invalid entry: {exc}") from exc
+    return tuple(out)
+
+
+def _canonicalize_str_tuple(values: Sequence[str] | None, *, name: str) -> Tuple[str, ...]:
+    if values is None:
+        return ()
+    out: list[str] = []
+    for i, item in enumerate(values):
+        if not isinstance(item, str) or not item.strip():
+            raise SchemaValidationError(f"{name}[{i}] must be non-empty string")
+        out.append(item)
+    return tuple(out)
+
+
+def _parse_layer_ref(value: str) -> int:
+    for pattern in _LAYER_REF_PATTERNS:
+        match = pattern.match(value)
+        if match is not None:
+            return int(match.group(1))
+    raise LayerReferenceError("layer_ref must match 'layer_<n>' or 'module_<n>'")
+
+
+def _sort_bucket(value: float, *, epsilon: float) -> int:
+    eps = max(float(epsilon), CANONICAL_FLOAT_EPSILON)
+    scaled = value / eps
+    if scaled >= 0:
+        return floor(scaled + 0.5)
+    return floor(scaled - 0.5)
+
+
+def _expert_sort_tuple(
     *,
     score: float,
     secondary: float,
@@ -174,112 +184,94 @@ def _expert_sort_terms(
     rank_position: int,
     score_epsilon: float,
     secondary_epsilon: float,
-) -> Tuple[float, float, int, int, int]:
-    """Build a deterministic comparator key for expert-level ranking."""
-
-    q_score = _float_sort_bucket(score, epsilon=score_epsilon)
-    q_secondary = _float_sort_bucket(secondary, epsilon=secondary_epsilon)
+) -> Tuple[int, int, int, int, int]:
     return (
-        -q_score,
-        -q_secondary,
-        int(expert_index),
+        -_sort_bucket(score, epsilon=score_epsilon),
+        -_sort_bucket(secondary, epsilon=secondary_epsilon),
         int(layer_index),
+        int(expert_index),
         int(rank_position),
     )
 
 
-def _canonicalize_metadata(value: Mapping[str, Any] | None) -> Dict[str, SchemaKey]:
-    if value is None:
-        return {}
-    if not isinstance(value, Mapping):
-        raise SchemaValidationError("metadata must be a mapping")
-    out: Dict[str, SchemaKey] = {}
-    for k, v in value.items():
-        if not isinstance(k, str):
-            raise SchemaValidationError("metadata keys must be strings")
-        out[k] = cast(SchemaKey, v)
-    return out
-
-
-def _canonicalize_int_list(values: Sequence[int] | None, *, name: str) -> Tuple[int, ...]:
-    if values is None:
-        return ()
-    out: List[int] = []
-    for value in values:
-        out.append(_ensure_non_negative_int(value, name=f"{name} index"))
-    return tuple(out)
-
-
-def _sort_shape(shape: ShapeTuple) -> ShapeTuple:
-    return tuple(shape)
-
-
-def _as_schema_dict(value: Any) -> Any:
-    """Convert schema values to JSON-safe primitives recursively."""
-
+def _as_schema_data(value: Any) -> Any:
     if is_dataclass(value) and hasattr(value, "to_dict"):
-        return cast(Dict[str, Any], value.to_dict())
+        return value.to_dict()  # type: ignore[union-attr]
     if is_dataclass(value):
-        return cast(Dict[str, Any], asdict(value))
+        return asdict(value)
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, set):
-        return sorted((_as_schema_dict(v) for v in value), key=repr)
+        return sorted((_as_schema_data(v) for v in value), key=repr)
     if isinstance(value, tuple):
-        return [_as_schema_dict(v) for v in value]
+        return [_as_schema_data(v) for v in value]
     if isinstance(value, list):
-        return [_as_schema_dict(v) for v in value]
+        return [_as_schema_data(v) for v in list(value)]
     if isinstance(value, dict):
-        return {str(k): _as_schema_dict(v) for k, v in value.items()}
+        return {str(k): _as_schema_data(v) for k, v in value.items()}
     return value
 
 
-def _coerce_schema_kwargs(data: Mapping[str, Any], target: Type["_SchemaBase"]) -> Dict[str, Any]:
-    """Build ctor kwargs by keeping only declared fields and preserving defaults."""
-
+def _coerce_mapping_for_payload(payload: Mapping[str, Any], target: Type["_SchemaBase"]) -> Dict[str, Any]:
     hints = get_type_hints(target)
     kwargs: Dict[str, Any] = {}
     for f in fields(target):
-        key = f.name
-        if key in data:
-            value = data[key]
+        if f.name.startswith("_"):
+            continue
+        if f.name in payload:
+            value = payload[f.name]
         elif f.default is not MISSING:
             continue
         elif f.default_factory is not MISSING:
             continue
         else:
-            raise SchemaValidationError(f"Missing required schema field '{key}' for {target.__name__}")
-        # Preserve raw shape/list conversions for tuple typed fields.
-        annotation = hints.get(key)
-        if annotation in (Tuple[int, ...], tuple[int, ...], Tuple[int, int], tuple[int, int]):
-            if value is not None:
-                value = _ensure_shape_tuple(value, name=key)
-        if target.__name__ == "PrunePlan" and key == "per_layer_plans":
-            if value is not None:
-                converted = []
-                for item in value:
-                    if isinstance(item, Mapping):
-                        converted.append(PrunePlanItem.from_dict(item))
-                    else:
-                        converted.append(item)
-                value = tuple(converted)
-        elif target.__name__ == "RunArtifactManifest" and key == "run_plan":
-            if isinstance(value, Mapping):
-                value = PrunePlan.from_dict(value)
-        elif target.__name__ == "RunArtifactManifest" and key == "model_handle":
-            if isinstance(value, Mapping):
-                value = ModelHandle.from_dict(value)
-        kwargs[key] = value
-    return kwargs
+            raise SchemaValidationError(f"Missing required field '{f.name}' for {target.__name__}")
 
-SchemaClass = TypeVar("SchemaClass", bound="_SchemaBase")
+        annotation = hints.get(f.name)
+        if annotation is tuple[int, ...]:
+            if value is not None:
+                value = _canonicalize_int_tuple(value, name=f.name)
+            else:
+                value = ()
+        elif annotation is Optional[Tuple[int, ...]]:
+            if value is not None:
+                value = _ensure_shape_tuple(value, name=f.name, allow_empty=True)
+        elif annotation is Tuple[str, ...]:
+            value = _canonicalize_str_tuple(value, name=f.name) if value is not None else ()
+        elif f.name == "per_layer_plans" and target.__name__ == "PrunePlan":
+            converted: list[PrunePlanItem] = []
+            for item in value or ():
+                if isinstance(item, Mapping):
+                    converted.append(PrunePlanItem.from_dict(item))
+                elif isinstance(item, PrunePlanItem):
+                    converted.append(item)
+                else:
+                    raise SchemaValidationError("per_layer_plans entries must be mappings")
+            value = tuple(converted)
+        elif f.name == "run_plan" and target.__name__ == "RunArtifactManifest":
+            if value is None:
+                pass
+            elif isinstance(value, Mapping):
+                value = PrunePlan.from_dict(value)
+            elif not isinstance(value, PrunePlan):
+                raise SchemaValidationError("run_plan must be a PrunePlan")
+        elif f.name == "model_handle" and target.__name__ == "RunArtifactManifest":
+            if value is None:
+                pass
+            elif isinstance(value, Mapping):
+                value = ModelHandle.from_dict(value)
+            elif not isinstance(value, ModelHandle):
+                raise SchemaValidationError("model_handle must be a ModelHandle")
+
+        kwargs[f.name] = value
+    return kwargs
 
 
 @dataclass
 class _SchemaBase:
-    """Base class implementing canonical serialisation helpers."""
+    """Base container with deterministic encoding/decoding helpers."""
 
-    _schema_type: ClassVar[str] = "_SchemaBase"
+    _schema_type: str = field(init=False, default="_SchemaBase", repr=False)
 
     @property
     def schema_version(self) -> str:
@@ -292,86 +284,77 @@ class _SchemaBase:
         self._validate()
 
     def to_dict(self) -> Dict[str, Any]:
-        data = cast(Dict[str, Any], asdict(self))
-        data["__schema_version"] = self.schema_version
+        data = asdict(self)
         data["__schema_type"] = self.__class__.__name__
+        data["__schema_version"] = self.schema_version
         return data
 
     @classmethod
-    def from_dict(cls: Type[SchemaClass], payload: Mapping[str, Any]) -> SchemaClass:
-        kwargs = _coerce_schema_kwargs(payload, cls)
-        return cast(SchemaClass, cls(**kwargs))
+    def from_dict(cls: Type[SchemaType], payload: Mapping[str, Any]) -> SchemaType:
+        kwargs = _coerce_mapping_for_payload(payload, cls)
+        return cls(**kwargs)  # type: ignore[arg-type]
 
 
 @dataclass
 class ModelHandle(_SchemaBase):
-    """Lightweight canonical handle for a model artifact.
+    """Canonical, lightweight handle for a model artifact.
 
-    All fields are metadata only and safe to persist.
+    Metric units are metadata-only and have no tensor coupling.
     """
 
-    model_id: str = "unknown"
+    model_id: str
     revision: Optional[str] = None
-    tokenizer_id: Optional[str] = None
     backend_name: Optional[str] = None
     source_path: Optional[str] = None
+    tokenizer_id: Optional[str] = None
+    framework_version: Optional[str] = None
     device: str = "cpu"
     dtype: Optional[str] = None
     seed: int = 0
-    framework_version: Optional[str] = None
     created_at: str = field(default_factory=_utcnow_iso)
     git_hash: Optional[str] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "ModelHandle"
+    _schema_type: str = field(init=False, default="ModelHandle", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_empty_str(self.model_id, name="model_id")
         _ensure_non_empty_str(self.device, name="device")
         _ensure_non_negative_int(self.seed, name="seed")
+        if self.revision is not None:
+            _ensure_non_empty_str(self.revision, name="revision")
+        if self.backend_name is not None:
+            _ensure_non_empty_str(self.backend_name, name="backend_name")
         self.metadata = _canonicalize_metadata(self.metadata)
 
     @property
-    def canonical_id(self) -> str:
-        """Deterministic identifier used in logs and derived filenames."""
+    def layer_id(self) -> str:
+        return f"{self.model_id}:layer"
 
-        return f"{self.model_id}:{self.backend_name or 'backend-unknown'}:{self.seed}"
-
-    def layer_id(self, layer_index: int) -> str:
-        """Canonical layer id in zero-padded form for stable comparisons."""
-
+    def layer_key(self, layer_index: int) -> str:
         _ensure_non_negative_int(layer_index, name="layer_index")
         return f"layer_{layer_index:04d}"
 
     @property
     def model_fingerprint(self) -> str:
-        """Hash-like fingerprint stable across JSON-equivalent field orderings."""
-
         payload = {
             "model_id": self.model_id,
             "revision": self.revision,
-            "tokenizer_id": self.tokenizer_id,
             "backend_name": self.backend_name,
             "source_path": self.source_path,
+            "tokenizer_id": self.tokenizer_id,
+            "framework_version": self.framework_version,
             "device": self.device,
             "dtype": self.dtype,
             "seed": self.seed,
-            "framework_version": self.framework_version,
             "git_hash": self.git_hash,
             "metadata": self.metadata,
         }
-        canonical = json.dumps(_as_schema_dict(payload), sort_keys=True, separators=(",", ":"))
-        return sha256(canonical.encode("utf-8")).hexdigest()
+        return sha256(to_json(payload).encode("utf-8")).hexdigest()
 
 
 @dataclass
 class LayerTopology(_SchemaBase):
-    """Static topology metadata for one MoE layer.
-
-    Units:
-    - expert_count: count of routed experts in the layer.
-    - top_k: number of experts selected per token.
-    - hidden_size: feed-forward hidden width.
-    """
+    """Static MoE layer topology metadata."""
 
     layer_index: int
     layer_name: str
@@ -387,7 +370,7 @@ class LayerTopology(_SchemaBase):
     module_paths: Dict[str, str] = field(default_factory=dict)
     is_moe: bool = True
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "LayerTopology"
+    _schema_type: str = field(init=False, default="LayerTopology", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
@@ -403,36 +386,23 @@ class LayerTopology(_SchemaBase):
         if self.top_k > self.expert_count:
             raise TopologyMismatchError("top_k cannot exceed expert_count")
         if self.layer_ref is not None:
-            _parse_layer_reference(self.layer_ref)
+            _parse_layer_ref(self.layer_ref)
         self.module_paths = {str(k): str(v) for k, v in self.module_paths.items()}
         self.metadata = _canonicalize_metadata(self.metadata)
+        self.is_moe = _ensure_bool(self.is_moe, name="is_moe")
 
     @property
     def layer_id(self) -> str:
-        """Canonical layer identifier used across logs and manifests."""
-
         return f"layer_{self.layer_index:04d}"
 
     @property
-    def expert_ref(self) -> str:
-        """Reference key for expert collections at this layer."""
-
-        return f"{self.layer_id}:expert_count_{self.expert_count}"
+    def expert_key(self) -> str:
+        return f"{self.layer_id}:expert_{self.expert_count}"
 
 
 @dataclass
 class RouterState(_SchemaBase):
-    """Snapshot of router metadata used for reproducible diagnostics.
-
-    Shapes are stored as plain integer tuples for JSON portability.
-
-    Attributes:
-        logits_shape: router logits tensor shape.
-        top_k_indices_shape: indices tensor shape.
-        top_k_weights_shape: top-k weight tensor shape.
-        projection_shape: projection weight tensor shape.
-        per_expert_scale_shape: per-expert scale tensor shape.
-    """
+    """Router metadata captured for deterministic diagnostics."""
 
     layer_index: int
     num_experts: int
@@ -446,13 +416,16 @@ class RouterState(_SchemaBase):
     has_raw_logits_capture: bool = False
     route_scale_present: bool = False
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "RouterState"
+    _schema_type: str = field(init=False, default="RouterState", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
         _ensure_positive_int(self.num_experts, name="num_experts")
         _ensure_positive_int(self.top_k, name="top_k")
-        _ensure_shape_tuple(self.logits_shape, name="logits_shape", allow_empty=False)
+        if self.top_k > self.num_experts:
+            raise TopologyMismatchError("top_k cannot exceed num_experts")
+
+        self.logits_shape = _ensure_shape_tuple(self.logits_shape, name="logits_shape", allow_empty=False)
         self.top_k_indices_shape = _ensure_shape_tuple(
             self.top_k_indices_shape,
             name="top_k_indices_shape",
@@ -469,13 +442,13 @@ class RouterState(_SchemaBase):
             name="per_expert_scale_shape",
             allow_empty=True,
         )
-        if self.top_k > self.num_experts:
-            raise TopologyMismatchError("top_k cannot exceed num_experts")
+
         if self.top_k_indices_shape is not None and self.top_k_weights_shape is not None:
             if len(self.top_k_indices_shape) != len(self.top_k_weights_shape):
                 raise ShapeInvariantViolationError(
                     "top_k_indices_shape and top_k_weights_shape must have same rank"
                 )
+
         self.has_router_probabilities = _ensure_bool(self.has_router_probabilities, name="has_router_probabilities")
         self.has_raw_logits_capture = _ensure_bool(self.has_raw_logits_capture, name="has_raw_logits_capture")
         self.route_scale_present = _ensure_bool(self.route_scale_present, name="route_scale_present")
@@ -492,12 +465,9 @@ class RouterState(_SchemaBase):
 
 @dataclass
 class ExpertStats(_SchemaBase):
-    """Static expert statistics collected from offline router inspection.
+    """Static expert utility scores.
 
-    Metrics:
-    - static_gate_mass (dimensionless probability mass) in [0, ∞).
-    - static_gate_entropy (nats): entropy proxy over the routing distribution.
-    - router_bias_norm (L2 norm): magnitude of router prior before softmax.
+    ``static_gate_mass`` and ``static_gate_entropy`` are non-negative floats.
     """
 
     layer_index: int
@@ -509,7 +479,7 @@ class ExpertStats(_SchemaBase):
     static_rank: Optional[int] = None
     ffn_param_count: Optional[int] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "ExpertStats"
+    _schema_type: str = field(init=False, default="ExpertStats", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
@@ -521,39 +491,33 @@ class ExpertStats(_SchemaBase):
         if self.static_gate_entropy < 0:
             raise SchemaValidationError("static_gate_entropy must be >= 0")
         if self.static_gate_entropy_norm is not None:
-            _ensure_float(self.static_gate_entropy_norm, name="static_gate_entropy_norm")
+            self.static_gate_entropy_norm = _ensure_float(self.static_gate_entropy_norm, name="static_gate_entropy_norm")
         if self.router_bias_norm is not None:
-            _ensure_float(self.router_bias_norm, name="router_bias_norm")
+            self.router_bias_norm = _ensure_float(self.router_bias_norm, name="router_bias_norm")
         if self.static_rank is not None:
-            _ensure_non_negative_int(self.static_rank, name="static_rank")
+            self.static_rank = _ensure_non_negative_int(self.static_rank, name="static_rank")
         if self.ffn_param_count is not None:
-            _ensure_non_negative_int(self.ffn_param_count, name="ffn_param_count")
+            self.ffn_param_count = _ensure_non_negative_int(self.ffn_param_count, name="ffn_param_count")
         self.metadata = _canonicalize_metadata(self.metadata)
 
+    @property
     def expert_key(self) -> str:
-        """Canonical key that uniquely identifies this expert in a layer."""
-
         return f"layer_{self.layer_index:04d}:expert_{self.expert_index:04d}"
 
     def sort_key(
         self,
         *,
-        secondary: Optional[float] = None,
         score_epsilon: float = CANONICAL_FLOAT_EPSILON,
         secondary_epsilon: float = CANONICAL_FLOAT_EPSILON,
-    ) -> Tuple[float, float, int, int, int]:
-        """Deterministic sort key for expert ranking."""
-
-        score = self.static_gate_mass
-        mass = self.static_gate_entropy
-        if secondary is None:
-            secondary = self.router_bias_norm or 0.0
-        return _expert_sort_terms(
-            score=score,
-            secondary=mass + float(secondary or 0.0),
+        rank_position: int = 0,
+    ) -> Tuple[int, int, int, int, int]:
+        secondary = self.router_bias_norm if self.router_bias_norm is not None else 0.0
+        return _expert_sort_tuple(
+            score=self.static_gate_mass,
+            secondary=self.static_gate_entropy + secondary,
             expert_index=self.expert_index,
             layer_index=self.layer_index,
-            rank_position=0,
+            rank_position=rank_position,
             score_epsilon=score_epsilon,
             secondary_epsilon=secondary_epsilon,
         )
@@ -561,14 +525,10 @@ class ExpertStats(_SchemaBase):
 
 @dataclass
 class ActivationStats(_SchemaBase):
-    """Runtime activation statistics per expert.
+    """Runtime per-expert activation counters.
 
-    Metrics:
-    - token_count: number of tokens routed to this expert.
-    - weighted_token_count: token_count scaled by routing confidence.
-    - mass_sum: sum of routing weights assigned to this expert.
-    - mean_weight: mean routing weight conditioned on routed tokens.
-    - entropy: entropy (nats) of per-token routing mass for this expert.
+    ``token_count`` and ``n_tokens`` are raw counts; ``mass_sum`` and
+    ``weighted_token_count`` are additive float totals.
     """
 
     layer_index: int
@@ -583,7 +543,7 @@ class ActivationStats(_SchemaBase):
     top1_mass: Optional[float] = None
     density: Optional[float] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "ActivationStats"
+    _schema_type: str = field(init=False, default="ActivationStats", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
@@ -610,8 +570,6 @@ class ActivationStats(_SchemaBase):
 
     @property
     def occupancy(self) -> float:
-        """Observed occupancy ratio for this expert in [0,1]."""
-
         if self.n_tokens == 0:
             return 0.0
         return float(self.token_count) / float(self.n_tokens)
@@ -619,11 +577,7 @@ class ActivationStats(_SchemaBase):
 
 @dataclass
 class PruneCandidate(_SchemaBase):
-    """Candidate signal used by pruning strategies.
-
-    score is a canonical ranking value where larger values are preferred.
-    secondary_score is an optional tie-break value (same orientation).
-    """
+    """Strategy-neutral ranking candidate for a single expert."""
 
     layer_index: int
     expert_index: int
@@ -632,7 +586,7 @@ class PruneCandidate(_SchemaBase):
     strategy_name: str = "frequency"
     score_components: Dict[str, float] = field(default_factory=dict)
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "PruneCandidate"
+    _schema_type: str = field(init=False, default="PruneCandidate", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
@@ -640,10 +594,11 @@ class PruneCandidate(_SchemaBase):
         self.score = _ensure_float(self.score, name="score")
         self.secondary_score = _ensure_float(self.secondary_score, name="secondary_score")
         _ensure_non_empty_str(self.strategy_name, name="strategy_name")
-        for key, value in self.score_components.items():
+        for key, val in self.score_components.items():
             if not isinstance(key, str):
                 raise SchemaValidationError("score_components keys must be strings")
-            _ensure_float(value, name=f"score_components[{key}]")
+            if not isinstance(val, (int, float)) or isinstance(val, bool):
+                raise SchemaValidationError("score_components values must be numeric")
         self.metadata = _canonicalize_metadata(self.metadata)
 
     def sort_key(
@@ -652,13 +607,12 @@ class PruneCandidate(_SchemaBase):
         score_epsilon: float = CANONICAL_FLOAT_EPSILON,
         secondary_epsilon: float = CANONICAL_FLOAT_EPSILON,
         rank_position: int = 0,
-    ) -> Tuple[float, float, int, int, int]:
-        """Deterministic sort key with explicit tie-breakers."""
-
+    ) -> Tuple[int, int, int, int, int]:
         secondary = self.secondary_score
-        if "mass" in self.score_components:
-            secondary = self.score_components["mass"]
-        return _expert_sort_terms(
+        mass = self.score_components.get("mass")
+        if isinstance(mass, (int, float)):
+            secondary = float(mass)
+        return _expert_sort_tuple(
             score=self.score,
             secondary=secondary,
             expert_index=self.expert_index,
@@ -671,7 +625,7 @@ class PruneCandidate(_SchemaBase):
 
 @dataclass
 class PrunePlanItem(_SchemaBase):
-    """Per-layer pruning decision with deterministic keep/drop sets."""
+    """Deterministic per-layer keep/drop plan."""
 
     layer_index: int
     keep_indices: Tuple[int, ...]
@@ -681,55 +635,59 @@ class PrunePlanItem(_SchemaBase):
     expected_expert_count: Optional[int] = None
     rationale: Optional[str] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "PrunePlanItem"
+    _schema_type: str = field(init=False, default="PrunePlanItem", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_negative_int(self.layer_index, name="layer_index")
-        self.keep_indices = _canonicalize_int_list(self.keep_indices, name="keep_indices")
-        self.drop_indices = _canonicalize_int_list(self.drop_indices, name="drop_indices")
-        if any(v >= 0 for v in self.keep_indices) is False and len(self.keep_indices) > 0:
-            pass
-        keep = set(self.keep_indices)
-        drop = set(self.drop_indices)
-        if len(keep) != len(self.keep_indices):
+        self.keep_indices = _canonicalize_int_tuple(self.keep_indices, name="keep_indices")
+        self.drop_indices = _canonicalize_int_tuple(self.drop_indices, name="drop_indices")
+
+        keep = list(self.keep_indices)
+        drop = list(self.drop_indices)
+        if len(set(keep)) != len(keep):
             raise TopologyMismatchError("keep_indices must be unique")
-        if len(drop) != len(self.drop_indices):
+        if len(set(drop)) != len(drop):
             raise TopologyMismatchError("drop_indices must be unique")
-        if keep & drop:
+        if set(keep) & set(drop):
             raise TopologyMismatchError("keep_indices and drop_indices must be disjoint")
-        actual_source = len(keep) + len(drop)
+
+        inferred_source = len(keep) + len(drop)
+        inferred_target = len(keep)
+
         if self.source_expert_count is not None:
-            self.source_expert_count = _ensure_positive_int(self.source_expert_count, name="source_expert_count")
-            if self.source_expert_count != actual_source:
+            source = _ensure_positive_int(self.source_expert_count, name="source_expert_count")
+            if source != inferred_source:
                 raise TopologyMismatchError(
-                    "source_expert_count must equal len(keep_indices)+len(drop_indices), "
-                    f"got {self.source_expert_count} vs {actual_source}"
+                    f"source_expert_count mismatch: expected {inferred_source}, got {source}"
                 )
+
         if self.target_expert_count is not None:
-            self.target_expert_count = _ensure_non_negative_int(self.target_expert_count, name="target_expert_count")
-            if self.target_expert_count != len(keep):
+            target = _ensure_non_negative_int(self.target_expert_count, name="target_expert_count")
+            if target != inferred_target:
                 raise TopologyMismatchError(
-                    "target_expert_count must equal len(keep_indices), "
-                    f"got {self.target_expert_count} vs {len(keep)}"
+                    f"target_expert_count mismatch: expected {inferred_target}, got {target}"
                 )
+
         if self.expected_expert_count is not None:
-            self.expected_expert_count = _ensure_positive_int(self.expected_expert_count, name="expected_expert_count")
-            if self.expected_expert_count < actual_source:
+            expected = _ensure_non_negative_int(self.expected_expert_count, name="expected_expert_count")
+            if expected != inferred_source:
                 raise TopologyMismatchError(
-                    "expected_expert_count must be >= existing source experts count"
+                    f"expected_expert_count mismatch: expected {inferred_source}, got {expected}"
                 )
+
+        if self.rationale is not None:
+            _ensure_non_empty_str(self.rationale, name="rationale")
         self.metadata = _canonicalize_metadata(self.metadata)
+
+        self.keep_indices = tuple(sorted(self.keep_indices))
+        self.drop_indices = tuple(sorted(self.drop_indices))
 
     @property
     def ordered_keep_indices(self) -> Tuple[int, ...]:
-        """Sorted keep indices for deterministic serialization."""
-
         return tuple(sorted(self.keep_indices))
 
     @property
     def ordered_drop_indices(self) -> Tuple[int, ...]:
-        """Sorted drop indices for deterministic serialization."""
-
         return tuple(sorted(self.drop_indices))
 
     @property
@@ -738,15 +696,15 @@ class PrunePlanItem(_SchemaBase):
 
     @property
     def prune_ratio(self) -> float:
-        source = self.source_expert_count if self.source_expert_count is not None else 0
+        source = len(self.keep_indices) + len(self.drop_indices)
         if source == 0:
             return 0.0
-        return len(self.drop_indices) / float(source)
+        return float(self.total_dropped) / float(source)
 
 
 @dataclass
 class PrunePlan(_SchemaBase):
-    """Canonical deterministic pruning plan across all MoE layers."""
+    """Canonical multi-layer pruning plan with deterministic ordering."""
 
     plan_id: str = "plan-0000"
     model_signature: str = "unknown"
@@ -760,7 +718,7 @@ class PrunePlan(_SchemaBase):
     source_run_id: Optional[str] = None
     constraints: Dict[str, SchemaKey] = field(default_factory=dict)
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "PrunePlan"
+    _schema_type: str = field(init=False, default="PrunePlan", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_empty_str(self.plan_id, name="plan_id")
@@ -768,55 +726,48 @@ class PrunePlan(_SchemaBase):
         _ensure_non_empty_str(self.strategy_name, name="strategy_name")
         _ensure_non_empty_str(self.strategy_version, name="strategy_version")
         _ensure_non_empty_str(self.created_by, name="created_by")
+        self.per_layer_plans = sort_plan_items(self.per_layer_plans)
+
+        seen: set[int] = set()
         for item in self.per_layer_plans:
-            _ = item
-        self.per_layer_plans = tuple(sort_plan_items(self.per_layer_plans))
+            if item.layer_index in seen:
+                raise TopologyMismatchError("duplicate layer_index in per_layer_plans")
+            seen.add(item.layer_index)
+
         if self.global_target_experts is not None:
-            self.global_target_experts = _ensure_positive_int(self.global_target_experts, name="global_target_experts")
+            _ensure_positive_int(self.global_target_experts, name="global_target_experts")
         if self.source_run_id is not None:
             _ensure_non_empty_str(self.source_run_id, name="source_run_id")
+        if self.model_handle is not None and not isinstance(self.model_handle, ModelHandle):
+            raise SchemaValidationError("model_handle must be ModelHandle")
+
         self.constraints = _canonicalize_metadata(self.constraints)
         self.metadata = _canonicalize_metadata(self.metadata)
 
     @property
     def total_source_experts(self) -> int:
-        """Sum of source expert counts across layers."""
-
         total = 0
         for item in self.per_layer_plans:
-            if item.source_expert_count is not None:
-                total += item.source_expert_count
+            total += len(item.keep_indices) + len(item.drop_indices)
         return total
 
     @property
     def total_target_experts(self) -> int:
-        """Sum of target expert counts across layers."""
-
-        total = 0
-        for item in self.per_layer_plans:
-            if item.source_expert_count is not None:
-                total += item.source_expert_count - item.total_dropped
-            else:
-                total += len(item.keep_indices)
-        return total
+        return sum(len(item.keep_indices) for item in self.per_layer_plans)
 
     @property
     def versioned_manifest_id(self) -> str:
-        """Canonical identifier tying schema version and plan identity."""
-
-        seed = self.to_compact_json()
-        digest = sha256(seed.encode("utf-8")).hexdigest()
+        payload = self.to_json(compact=True)
+        digest = sha256(payload.encode("utf-8")).hexdigest()
         return f"{self.schema_version}:{self.plan_id}:{digest[:16]}"
 
-    def to_compact_json(self) -> str:
-        """Compact, stable JSON representation for a pruning plan."""
-
-        return to_json(self, compact=True)
+    def to_json(self, compact: bool = True) -> str:
+        return to_json(self, compact=compact)
 
 
 @dataclass
 class RunArtifactManifest(_SchemaBase):
-    """Execution manifest shared by scan/bench/prune/export steps."""
+    """Run-level manifest carrying execution metadata."""
 
     run_id: str
     command: str
@@ -832,7 +783,7 @@ class RunArtifactManifest(_SchemaBase):
     parent_artifacts: Tuple[str, ...] = field(default_factory=tuple)
     run_plan: Optional[PrunePlan] = None
     metadata: Dict[str, SchemaKey] = field(default_factory=dict)
-    _schema_type: ClassVar[str] = "RunArtifactManifest"
+    _schema_type: str = field(init=False, default="RunArtifactManifest", repr=False)
 
     def _validate(self) -> None:
         _ensure_non_empty_str(self.run_id, name="run_id")
@@ -840,16 +791,19 @@ class RunArtifactManifest(_SchemaBase):
         _ensure_positive_int(self.top_k, name="top_k")
         _ensure_non_negative_int(self.prompt_count, name="prompt_count")
         _ensure_non_negative_int(self.seed, name="seed")
-        _ensure_non_negative_int(len(self.parent_artifacts), name="parent_artifacts")
+        if self.prompt_set_hash is not None:
+            _ensure_non_empty_str(self.prompt_set_hash, name="prompt_set_hash")
+        self.parent_artifacts = _canonicalize_str_tuple(self.parent_artifacts, name="parent_artifacts")
         self.input_checksums = {str(k): str(v) for k, v in self.input_checksums.items()}
         self.output_paths = {str(k): str(v) for k, v in self.output_paths.items()}
-        self.parent_artifacts = tuple(self.parent_artifacts)
+        if self.model_handle is not None and not isinstance(self.model_handle, ModelHandle):
+            raise SchemaValidationError("model_handle must be ModelHandle")
+        if self.run_plan is not None and not isinstance(self.run_plan, PrunePlan):
+            raise SchemaValidationError("run_plan must be PrunePlan")
         self.metadata = _canonicalize_metadata(self.metadata)
 
     @property
     def versioned_manifest_id(self) -> str:
-        """Versioned manifest id used for deterministic artifact naming."""
-
         key = f"{self.schema_version}:{self.run_id}:{self.command}:{self.started_at}"
         return sha256(key.encode("utf-8")).hexdigest()
 
@@ -868,180 +822,167 @@ SchemaType = Union[
 
 
 def sort_experts(
-    items: Iterable[Union[PruneCandidate, ExpertStats, Tuple[float, float, int], Tuple[int, float, float, int]]],
+    items: Iterable[
+        Union[
+            PruneCandidate,
+            ExpertStats,
+            Tuple[int, float, float, int],
+            Tuple[int, int, float, float, int],
+        ]
+    ],
     *,
     score_epsilon: float = CANONICAL_FLOAT_EPSILON,
     secondary_epsilon: float = CANONICAL_FLOAT_EPSILON,
-) -> List[Union[PruneCandidate, ExpertStats, Tuple[float, float, int], Tuple[int, float, float, int]]]:
-    """Sort experts deterministically.
+) -> list[Union[PruneCandidate, ExpertStats, Tuple[int, float, float, int], Tuple[int, int, float, float, int]]]:
+    """Stable expert ordering with explicit tie-breaks.
 
-    Supports:
-    - ExpertStats
-    - PruneCandidate
-    - tuples (layer_index, score, secondary, expert_index)
-
-    Sort policy: (-score, -secondary, expert_index, layer_index, input_position)
-    with epsilon-safe bucketing.
+    Primary key: ``-score`` (epsilon-safe), ``-secondary``, ``layer_index``,
+    ``expert_index``, and stable input position as final tiebreak.
     """
 
-    normalized: List[Tuple[Tuple[float, float, int, int, int], Any]] = []
+    normalized: list[tuple[tuple[int, int, int, int, int], Any]] = []
     for position, item in enumerate(items):
         if isinstance(item, PruneCandidate):
             normalized.append((item.sort_key(score_epsilon=score_epsilon, secondary_epsilon=secondary_epsilon, rank_position=position), item))
             continue
         if isinstance(item, ExpertStats):
-            normalized.append((item.sort_key(score_epsilon=score_epsilon, secondary_epsilon=secondary_epsilon), item))
+            normalized.append((item.sort_key(score_epsilon=score_epsilon, secondary_epsilon=secondary_epsilon, rank_position=position), item))
             continue
-        if isinstance(item, tuple):
-            if len(item) < 4:
-                raise SchemaValidationError("tuple expert records must have at least 4 elements")
-            layer_index, score, secondary, expert_index = item[:4]
-            layer_index_i = _ensure_non_negative_int(layer_index, name="tuple layer_index")
-            score_f = _ensure_float(score, name="tuple score")
-            secondary_f = _ensure_float(secondary, name="tuple secondary")
-            expert_index_i = _ensure_non_negative_int(expert_index, name="tuple expert_index")
-            normalized.append(
-                (
-                    _expert_sort_terms(
-                        score=score_f,
-                        secondary=secondary_f,
-                        expert_index=expert_index_i,
-                        layer_index=layer_index_i,
-                        rank_position=position,
-                        score_epsilon=score_epsilon,
-                        secondary_epsilon=secondary_epsilon,
-                    ),
-                    item,
-                )
-            )
-            continue
-        raise SchemaValidationError(f"Unsupported expert item type: {type(item).__name__}")
-    normalized.sort(key=lambda x: x[0])
+
+        if not isinstance(item, tuple):
+            raise SchemaValidationError(f"Unsupported expert record type: {type(item).__name__}")
+
+        if len(item) == 4:
+            layer_index, score, secondary, expert_index = item
+        elif len(item) == 5:
+            layer_index, score, secondary, expert_index, _position = item
+            # external position can be re-used only as a stable fallback
+            position = int(_position)
+        else:
+            raise SchemaValidationError("Tuple expert records must be (layer, score, secondary, expert) or plus position")
+
+        layer_index_i = _ensure_non_negative_int(layer_index, name="tuple layer_index")
+        expert_index_i = _ensure_non_negative_int(expert_index, name="tuple expert_index")
+        score_f = _ensure_float(score, name="tuple score")
+        secondary_f = _ensure_float(secondary, name="tuple secondary")
+
+        key = _expert_sort_tuple(
+            score=score_f,
+            secondary=secondary_f,
+            expert_index=expert_index_i,
+            layer_index=layer_index_i,
+            rank_position=position,
+            score_epsilon=score_epsilon,
+            secondary_epsilon=secondary_epsilon,
+        )
+        normalized.append((key, item))
+
+    normalized.sort(key=lambda entry: entry[0])
     return [item for _, item in normalized]
 
 
 def sort_plan_items(items: Iterable[PrunePlanItem]) -> Tuple[PrunePlanItem, ...]:
-    """Sort prune-plan items by layer and deterministic per-layer keys."""
-
+    """Sort plans deterministically for reproducible manifests."""
     return tuple(
         sorted(
             items,
-            key=lambda item: (item.layer_index, item.rationale or "", item.source_expert_count or 0, item.rationale or ""),
+            key=lambda it: (
+                it.layer_index,
+                len(it.keep_indices),
+                len(it.drop_indices),
+                tuple(it.ordered_keep_indices),
+                tuple(it.ordered_drop_indices),
+            ),
         )
     )
 
 
 def sort_topology(layers: Iterable[LayerTopology], *, with_ref_fallback: bool = True) -> Tuple[LayerTopology, ...]:
-    """Sort topologies by numeric layer index and stable references."""
-
-    def _key(item: LayerTopology) -> Tuple[int, str, int]:
-        ref = item.layer_ref if item.layer_ref is not None else ""
-        if with_ref_fallback:
-            return (item.layer_index, ref, len(item.layer_name))
-        return (item.layer_index, "", len(item.layer_name))
+    """Sort topologies by layer index with deterministic reference fallback."""
+    def _key(layer: LayerTopology) -> tuple[int, int, str, str]:
+        ref_value = layer.layer_ref or layer.layer_name or ""
+        ref_rank = -_parse_layer_ref(layer.layer_id)
+        if with_ref_fallback and layer.layer_ref is not None:
+            ref_rank = _parse_layer_ref(layer.layer_ref)
+        return (layer.layer_index, ref_rank, len(layer.module_paths), ref_value)
 
     return tuple(sorted(layers, key=_key))
 
 
-def to_dict(obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...]) -> Any:
-    """Serialize supported schema objects to a JSON-ready Python structure."""
+def to_dict(obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...] | None) -> Any:
+    """Serialize schema objects to JSON-ready primitive structures."""
+    return _as_schema_data(obj)
 
-    return _as_schema_dict(obj)
 
-
-def to_json(obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...], compact: bool = True) -> str:
-    """Serialize schema objects to canonical JSON bytes."""
-
+def to_json(
+    obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...] | None,
+    *,
+    compact: bool = True,
+) -> str:
+    payload = to_dict(obj)
     if compact:
-        return json.dumps(to_dict(obj), sort_keys=True, separators=(",", ":"))
-    return json.dumps(to_dict(obj), sort_keys=True, indent=2)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return json.dumps(payload, sort_keys=True, indent=2)
 
 
-def _construct_object(payload: Mapping[str, Any]) -> SchemaType:
+def _schema_name_to_ctor() -> MutableMapping[str, Type[_SchemaBase]]:
+    return {
+        ModelHandle.__name__: ModelHandle,
+        LayerTopology.__name__: LayerTopology,
+        RouterState.__name__: RouterState,
+        ExpertStats.__name__: ExpertStats,
+        ActivationStats.__name__: ActivationStats,
+        PruneCandidate.__name__: PruneCandidate,
+        PrunePlanItem.__name__: PrunePlanItem,
+        PrunePlan.__name__: PrunePlan,
+        RunArtifactManifest.__name__: RunArtifactManifest,
+    }
+
+
+def _construct_from_payload(payload: Mapping[str, Any]) -> SchemaType:
     schema_type = payload.get("__schema_type")
     if not isinstance(schema_type, str):
-        raise SchemaValidationError("JSON payload missing __schema_type")
-    constructors = {
-        cls.__name__: cls
-        for cls in [
-            ModelHandle,
-            LayerTopology,
-            RouterState,
-            ExpertStats,
-            ActivationStats,
-            PruneCandidate,
-            PrunePlanItem,
-            PrunePlan,
-            RunArtifactManifest,
-        ]
-    }
-    if schema_type not in constructors:
-        raise SchemaValidationError(f"Unsupported __schema_type: {schema_type}")
-    constructor = constructors[schema_type]
-    core = dict(payload)
-    core.pop("__schema_type", None)
-    core.pop("__schema_version", None)
-    return constructor.from_dict(core)  # type: ignore[return-value]
+        raise SchemaValidationError("Missing __schema_type")
+    mapping = dict(payload)
+    mapping.pop("__schema_type", None)
+    mapping.pop("__schema_version", None)
+    constructors = _schema_name_to_ctor()
+    ctor = constructors.get(schema_type)
+    if ctor is None:
+        raise SchemaValidationError(f"Unsupported __schema_type '{schema_type}'")
+    return ctor.from_dict(mapping)  # type: ignore[return-value]
 
 
-def from_json(payload: Union[str, Mapping[str, Any]]) -> Any:
-    """Parse JSON text or mapping back into canonical schema objects.
-
-    Supported payload formats:
-    - serialized canonical dict produced by `to_dict`/`to_json`
-    - mapping with root key `type`/`kind` and object body
-    - raw list of schema dicts
-    """
-
+def from_json(payload: Union[str, Mapping[str, Any], list[Any]]) -> Any:
+    """Deserialize canonical JSON back into schema objects."""
     data = json.loads(payload) if isinstance(payload, str) else payload
+
     if isinstance(data, Mapping):
         if "__schema_type" in data:
-            return _construct_object(data)
-        if "type" in data and data.get("type") in {
-            "ModelHandle",
-            "LayerTopology",
-            "RouterState",
-            "ExpertStats",
-            "ActivationStats",
-            "PruneCandidate",
-            "PrunePlanItem",
-            "PrunePlan",
-            "RunArtifactManifest",
-        }:
-            payload_dict = dict(data)
-            payload_dict["__schema_type"] = payload_dict.pop("type")
-            return _construct_object(payload_dict)
-        if "kind" in data and data.get("kind") in {
-            "ModelHandle",
-            "LayerTopology",
-            "RouterState",
-            "ExpertStats",
-            "ActivationStats",
-            "PruneCandidate",
-            "PrunePlanItem",
-            "PrunePlan",
-            "RunArtifactManifest",
-        }:
-            payload_dict = dict(data)
-            payload_dict["__schema_type"] = payload_dict.pop("kind")
-            return _construct_object(payload_dict)
-        raise SchemaValidationError("Unsupported JSON payload; missing __schema_type")
+            return _construct_from_payload(data)
+        if "type" in data and isinstance(data.get("type"), str):
+            payload_ = dict(data)
+            payload_["__schema_type"] = payload_.pop("type")
+            return _construct_from_payload(payload_)
+        if "kind" in data and isinstance(data.get("kind"), str):
+            payload_ = dict(data)
+            payload_["__schema_type"] = payload_.pop("kind")
+            return _construct_from_payload(payload_)
+        raise SchemaValidationError("Unsupported mapping payload")
+
     if isinstance(data, list):
-        return [from_json(entry) for entry in data]
-    raise SchemaValidationError("Unsupported JSON payload type")
+        return [from_json(item) if isinstance(item, (str, dict, list)) else item for item in data]
+
+    raise SchemaValidationError("Unsupported payload type")
 
 
-def to_json_file(path: Union[str, Path], obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...]) -> Path:
-    """Write canonical json to disk with stable encoding."""
-
+def to_json_file(path: str | Path, obj: SchemaType | dict[str, Any] | list[Any] | tuple[Any, ...]) -> Path:
     target = Path(path)
     target.write_text(to_json(obj), encoding="utf-8")
     return target
 
 
-def from_json_file(path: Union[str, Path]) -> Any:
-    """Read canonical json from disk."""
-
+def from_json_file(path: str | Path) -> Any:
     return from_json(Path(path).read_text(encoding="utf-8"))
 
 
@@ -1058,7 +999,7 @@ __all__ = [
     "PrunePlanItem",
     "PrunePlan",
     "RunArtifactManifest",
-        "SchemaValidationError",
+    "SchemaValidationError",
     "ShapeInvariantViolationError",
     "TopologyMismatchError",
     "LayerReferenceError",

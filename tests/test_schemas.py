@@ -9,6 +9,7 @@ from moe_surgeon.schemas import (
     ModelHandle,
     RouterState,
     ActivationStats,
+    RunArtifactManifest,
     TopologyMismatchError,
     ShapeInvariantViolationError,
     to_json,
@@ -28,6 +29,11 @@ def test_sort_experts_is_deterministic_with_tie_fallback() -> None:
     assert ordered == [(0, 0.2, 0.5, 0), (0, 0.2, 0.5, 1), (1, 0.2, 0.5, 1)]
 
 
+def test_sort_experts_uses_explicit_tiebreaks() -> None:
+    ordered = sort_experts([(0, 0.1, 0.2, 3), (1, 0.1, 0.2, 1), (0, 0.1, 0.2, 1)])
+    assert ordered == [(0, 0.1, 0.2, 1), (0, 0.1, 0.2, 3), (1, 0.1, 0.2, 1)]
+
+
 def test_json_round_trip_preserves_plan() -> None:
     plan = PrunePlan(
         model_signature="m",
@@ -44,6 +50,31 @@ def test_json_round_trip_preserves_plan() -> None:
     restored = from_json(payload)
     assert restored == plan
     assert type(restored).__name__ == "PrunePlan"
+
+
+def test_json_round_trip_preserves_manifest_with_nested_plan() -> None:
+    plan = PrunePlan(
+        model_signature="m",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0,),
+                drop_indices=(),
+                source_expert_count=1,
+            ),
+        ),
+    )
+    manifest = RunArtifactManifest(
+        run_id="run-123",
+        command="scan",
+        top_k=8,
+        prompt_count=3,
+        run_plan=plan,
+    )
+    payload = to_json(manifest)
+    restored = from_json(payload)
+    assert restored == manifest
+    assert restored.versioned_manifest_id and isinstance(restored.versioned_manifest_id, str)
 
 
 def test_shape_validation_router_state() -> None:
