@@ -159,6 +159,9 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Added a second `_require_live_gemma4_runtime()` regression in `tests/test_runtime_profiler.py` covering supported-floor Transformers installs that still lack Gemma4 symbols, asserting the helper skips through the same shared remediation diagnostics used by the below-floor branch.
+
+## 2026-04-17
 - Locked the live Gemma4 runtime skip regression in `tests/test_runtime_profiler.py` to the shared backend runtime contract, asserting `installed_transformers_version`, `minimum_transformers_version`, `required_symbol`, `support_added_on`, `source`, and canonical `guidance` text instead of a placeholder skip fragment.
 
 ## 2026-04-17

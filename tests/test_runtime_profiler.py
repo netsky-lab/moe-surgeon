@@ -262,6 +262,51 @@ def test_require_live_gemma4_runtime_skips_below_support_floor(
     assert f"guidance={gemma4_runtime_guidance(installed_version)}" in message
 
 
+def test_require_live_gemma4_runtime_skips_missing_symbols_at_supported_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    installed_version = "5.5.4"
+    guidance = (
+        f"{gemma4_runtime_guidance(installed_version)} "
+        "If you already installed a supported transformers release, "
+        "reinstall a standard Hugging Face transformers build because the Gemma4 symbols are missing."
+    )
+    monkeypatch.setattr(importlib_metadata, "version", lambda package_name: installed_version)
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "check_gemma4_runtime_support",
+        lambda **_: (_ for _ in ()).throw(
+            UnsupportedModelError(
+                "tiny-random/gemma-4-moe",
+                available_backends=("gemma4",),
+                details={
+                    "installed_transformers_version": installed_version,
+                    "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+                    "required_symbol": "Gemma4ForConditionalGeneration",
+                    "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+                    "source": _LIVE_GEMMA4_MODEL_ID,
+                    "guidance": guidance,
+                    "symbol_name": "Gemma4ForConditionalGeneration",
+                    "symbol_resolution_error": "FileNotFoundError: lazy Gemma4 module import failed",
+                },
+            )
+        ),
+    )
+
+    with pytest.raises(pytest.skip.Exception) as exc_info:
+        _require_live_gemma4_runtime()
+
+    message = str(exc_info.value)
+    assert f"installed_transformers_version={installed_version}" in message
+    assert f"minimum_transformers_version={GEMMA4_MIN_TRANSFORMERS_VERSION}" in message
+    assert "required_symbol=Gemma4ForConditionalGeneration" in message
+    assert f"support_added_on={GEMMA4_SUPPORT_ADDED_ON}" in message
+    assert f"source={_LIVE_GEMMA4_MODEL_ID}" in message
+    assert f"guidance={guidance}" in message
+    assert "symbol_name=Gemma4ForConditionalGeneration" in message
+    assert "symbol_resolution_error=FileNotFoundError: lazy Gemma4 module import failed" in message
+
+
 def test_router_activation_profiler_collects_outputs_and_detaches_hooks() -> None:
     topology = (_layer(1), _layer(0))
     router_states = {layer.layer_index: _router_state(layer.layer_index) for layer in topology}
