@@ -546,3 +546,25 @@ def test_plan_metadata_traceability_and_repeated_output_are_stable() -> None:
     )
     assert isinstance(first.metadata["constraint_digest"], str)
     assert isinstance(first.metadata["candidate_digest"], str)
+
+
+def test_plan_constraints_reflect_resolved_clipped_layer_bounds() -> None:
+    plan = build_prune_plan(
+        _topology(),
+        strategy="frequency",
+        activation_stats=_activation_stats(),
+        constraints=PlannerConstraints(
+            global_target_experts=4,
+            min_experts_per_layer=1,
+            max_experts_per_layer=10,
+        ),
+        model_signature="model-clipped",
+    )
+
+    assert plan.constraints["global_target_experts"] == 4
+    assert plan.constraints["min_experts_per_layer"] == 1
+    assert plan.constraints["max_experts_per_layer"] == 3
+    assert plan.metadata["layer_0_maximum_keep"] == 3
+    assert plan.metadata["layer_1_maximum_keep"] == 3
+    assert "layer_0_max_experts" not in plan.constraints
+    assert "layer_1_max_experts" not in plan.constraints

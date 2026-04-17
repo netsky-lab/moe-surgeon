@@ -132,23 +132,57 @@ class PlannerConstraints:
             payload["max_experts_per_layer"] = self.max_experts_per_layer
         return payload
 
-    def plan_constraints(self) -> dict[str, SchemaKey]:
-        """Return a flattened scalar-only representation for PrunePlan."""
+    def plan_constraints(
+        self,
+        budgets: Sequence["_LayerBudget"] | None = None,
+        *,
+        global_target_experts: int | None = None,
+    ) -> dict[str, SchemaKey]:
+        """Return resolved scalar constraints for PrunePlan serialization."""
 
         flattened: dict[str, SchemaKey] = {
             "min_experts_per_layer": self.min_experts_per_layer,
         }
-        if self.global_target_experts is not None:
-            flattened["global_target_experts"] = self.global_target_experts
+        resolved_global_target = (
+            self.global_target_experts if global_target_experts is None else global_target_experts
+        )
+        if resolved_global_target is not None:
+            flattened["global_target_experts"] = resolved_global_target
+        if budgets is None:
+            if self.max_experts_per_layer is not None:
+                flattened["max_experts_per_layer"] = self.max_experts_per_layer
+            for layer_index, override in self.layer_overrides.items():
+                if override.target_experts is not None:
+                    flattened[f"layer_{layer_index}_target_experts"] = override.target_experts
+                if override.min_experts is not None:
+                    flattened[f"layer_{layer_index}_min_experts"] = override.min_experts
+                if override.max_experts is not None:
+                    flattened[f"layer_{layer_index}_max_experts"] = override.max_experts
+            return flattened
+
+        uniform_global_max: int | None = None
         if self.max_experts_per_layer is not None:
-            flattened["max_experts_per_layer"] = self.max_experts_per_layer
-        for layer_index, override in self.layer_overrides.items():
-            if override.target_experts is not None:
-                flattened[f"layer_{layer_index}_target_experts"] = override.target_experts
-            if override.min_experts is not None:
-                flattened[f"layer_{layer_index}_min_experts"] = override.min_experts
-            if override.max_experts is not None:
-                flattened[f"layer_{layer_index}_max_experts"] = override.max_experts
+            resolved_global_maxima = {
+                min(self.max_experts_per_layer, budget.layer.expert_count) for budget in budgets
+            }
+            if len(resolved_global_maxima) == 1:
+                uniform_global_max = resolved_global_maxima.pop()
+                flattened["max_experts_per_layer"] = uniform_global_max
+
+        for budget in budgets:
+            layer_index = budget.layer.layer_index
+            override = self.layer_overrides.get(layer_index)
+            if override is not None and override.target_experts is not None:
+                flattened[f"layer_{layer_index}_target_experts"] = budget.minimum_keep
+                continue
+            if budget.minimum_keep != self.min_experts_per_layer:
+                flattened[f"layer_{layer_index}_min_experts"] = budget.minimum_keep
+            if uniform_global_max is not None:
+                if budget.maximum_keep != uniform_global_max:
+                    flattened[f"layer_{layer_index}_max_experts"] = budget.maximum_keep
+                continue
+            if self.max_experts_per_layer is not None or budget.maximum_keep != budget.layer.expert_count:
+                flattened[f"layer_{layer_index}_max_experts"] = budget.maximum_keep
         return flattened
 
 
@@ -510,7 +544,10 @@ def build_prune_plan(
         created_by="planner",
         created_at=CANONICAL_DEFAULT_TIMESTAMP,
         source_run_id=source_run_id,
-        constraints=active_constraints.plan_constraints(),
+        constraints=active_constraints.plan_constraints(
+            budgets,
+            global_target_experts=requested_global_target,
+        ),
         metadata=metadata,
     )
 

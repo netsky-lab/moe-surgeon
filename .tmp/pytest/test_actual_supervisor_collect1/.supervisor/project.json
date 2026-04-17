@@ -1,0 +1,10 @@
+{
+  "verifyConfig": {
+    "browserTestCommand": null,
+    "buildCommand": null,
+    "coverageCommand": null,
+    "lintCommand": "/usr/bin/python -c \"print('lint via repo file')\"",
+    "testCommand": "/usr/bin/python -c \"print('tests via repo file')\"",
+    "typeCheckCommand": "/usr/bin/python -c \"print('typecheck via repo file')\""
+  }
+}
