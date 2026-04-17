@@ -56,6 +56,10 @@ class MetricsReport:
     summary: MetricSummary
 
 
+class MetricsConfigurationError(ValueError):
+    """Raised when requested repo metrics checks are missing or invalid."""
+
+
 def load_verify_config(root_path: Path) -> VerifyConfig:
     """Load repo metrics commands from the repo-local project config."""
 
@@ -80,8 +84,12 @@ def collect_metrics(root_path: Path, *, timeout_seconds: int, selected_check: st
 
     config = load_verify_config(root_path)
     checks: list[MetricCheck] = []
+    available_checks = _iter_checks(config)
 
-    for category, name, command in _iter_checks(config):
+    if selected_check is not None and all(name != selected_check for _, name, _ in available_checks):
+        raise MetricsConfigurationError(f"Requested check '{selected_check}' is not configured in .supervisor/project.json")
+
+    for category, name, command in available_checks:
         if selected_check is not None and name != selected_check:
             continue
         checks.append(_run_check(root_path, category=category, name=name, command=command, timeout_seconds=timeout_seconds))
@@ -156,7 +164,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root_path = args.root.resolve()
-    report = collect_metrics(root_path, timeout_seconds=args.timeout_seconds, selected_check=args.check)
+    try:
+        report = collect_metrics(root_path, timeout_seconds=args.timeout_seconds, selected_check=args.check)
+    except MetricsConfigurationError as exc:
+        sys.stderr.write(f"{exc}\n")
+        return 1
+
     final_report = MetricsReport(
         task_id=args.task_id,
         collected_at=report.collected_at,

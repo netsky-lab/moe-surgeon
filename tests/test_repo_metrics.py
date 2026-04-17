@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from moe_surgeon import repo_metrics
 
 
@@ -216,3 +218,98 @@ def test_repo_metrics_collector_single_check_uses_same_entrypoint(tmp_path: Path
     payload = json.loads(result.stdout)
     assert [check["name"] for check in payload["checks"]] == ["typecheck"]
     assert payload["summary"] == {"failed": 0, "passed": 1, "total": 1}
+
+
+def test_repo_metrics_collector_single_check_fails_when_missing(tmp_path: Path) -> None:
+    root_path = tmp_path
+    supervisor_dir = root_path / ".supervisor"
+    supervisor_dir.mkdir(parents=True)
+    project_json = supervisor_dir / "project.json"
+    project_json.write_text(
+        json.dumps(
+            {
+                "verifyConfig": {
+                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
+                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
+                    "buildCommand": None,
+                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
+                    "coverageCommand": None,
+                    "browserTestCommand": None,
+                },
+                "repoMetricsConfig": {
+                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
+                    "typeCheckCommand": None,
+                    "buildCommand": None,
+                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
+                    "coverageCommand": None,
+                    "browserTestCommand": None,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "moe_surgeon.repo_metrics",
+            "--root",
+            str(root_path),
+            "--check",
+            "typecheck",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "Requested check 'typecheck' is not configured" in result.stderr
+
+
+def test_actual_supervisor_collector_reports_three_checks_for_repo(tmp_path: Path) -> None:
+    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+    if not collector_path.exists():
+        pytest.skip("supervisor collector dist build is not available")
+
+    project_root = tmp_path
+    lint_command = f"{sys.executable} -c \"print('lint ok')\""
+    typecheck_command = f"{sys.executable} -c \"print('typecheck ok')\""
+    test_command = f"{sys.executable} -c \"print('tests ok')\""
+    probe = f"""
+import {{ collectMetrics }} from {json.dumps(str(collector_path))};
+
+const metrics = await collectMetrics(
+  {{
+    rootPath: {json.dumps(str(project_root))},
+    verifyConfig: {{
+      lintCommand: {json.dumps(lint_command)},
+      typeCheckCommand: {json.dumps(typecheck_command)},
+      buildCommand: null,
+      testCommand: {json.dumps(test_command)},
+      coverageCommand: null,
+      browserTestCommand: null
+    }}
+  }},
+  "taskid",
+  "runid",
+);
+
+console.log(JSON.stringify(metrics));
+"""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", probe],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["summary"] == {"failed": 0, "passed": 3, "total": 3}
+    assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "test_suite"]
