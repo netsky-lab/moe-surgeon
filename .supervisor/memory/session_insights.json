@@ -70,5 +70,13 @@
       "add-a-cli-version-smoke-test"
     ],
     "timestamp": "2026-04-17T09:00:17.422Z"
+  },
+  {
+    "taskTitle": "Implement static scan analyzer for router-weight utilization",
+    "summary": "[Build static router weight extractor]: Fixed the remaining acceptance gap in repo-metrics configuration.\n\nI updated [.supervisor/project.json](/home/netsky/dev/labs/moe-surgeon/.supervisor/project.json) so `repoMetricsConfig` now exposes the required canonical checks:\n- `lintCommand`: `python -m ru",
+    "tags": [
+      "implement-static-scan-analyzer-for-router-weight-utilization"
+    ],
+    "timestamp": "2026-04-17T09:38:47.757Z"
   }
 ]
