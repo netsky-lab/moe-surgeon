@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
 import argparse
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 import subprocess
 import sys
-from datetime import datetime, timezone
 
 
 @dataclass(frozen=True)
@@ -67,7 +67,9 @@ def load_verify_config(root_path: Path) -> VerifyConfig:
     payload = json.loads(config_path.read_text(encoding="utf-8"))
     metrics_config = payload.get("repoMetricsConfig", payload.get("verifyConfig"))
     if not isinstance(metrics_config, dict):
-        raise ValueError("Missing repoMetricsConfig mapping in .supervisor/project.json")
+        raise MetricsConfigurationError(
+            "Missing repoMetricsConfig mapping in .supervisor/project.json"
+        )
 
     return VerifyConfig(
         lint_command=_optional_command(metrics_config.get("lintCommand")),
@@ -79,7 +81,12 @@ def load_verify_config(root_path: Path) -> VerifyConfig:
     )
 
 
-def collect_metrics(root_path: Path, *, timeout_seconds: int, selected_check: str | None = None) -> MetricsReport:
+def collect_metrics(
+    root_path: Path,
+    *,
+    timeout_seconds: int,
+    selected_check: str | None = None,
+) -> MetricsReport:
     """Run configured repo checks and return a deterministic metrics report."""
 
     config = load_verify_config(root_path)
@@ -87,12 +94,22 @@ def collect_metrics(root_path: Path, *, timeout_seconds: int, selected_check: st
     available_checks = _iter_checks(config)
 
     if selected_check is not None and all(name != selected_check for _, name, _ in available_checks):
-        raise MetricsConfigurationError(f"Requested check '{selected_check}' is not configured in .supervisor/project.json")
+        raise MetricsConfigurationError(
+            f"Requested check '{selected_check}' is not configured in .supervisor/project.json"
+        )
 
     for category, name, command in available_checks:
         if selected_check is not None and name != selected_check:
             continue
-        checks.append(_run_check(root_path, category=category, name=name, command=command, timeout_seconds=timeout_seconds))
+        checks.append(
+            _run_check(
+                root_path,
+                category=category,
+                name=name,
+                command=command,
+                timeout_seconds=timeout_seconds,
+            )
+        )
 
     passed = sum(1 for check in checks if check.passed)
     return MetricsReport(
@@ -116,7 +133,13 @@ def write_report(report: MetricsReport, output_path: Path | None) -> None:
     output_path.write_text(f"{document}\n", encoding="utf-8")
 
 
-def append_task_log(root_path: Path, *, task_id: str, report: MetricsReport, artifact_path: Path | None) -> None:
+def append_task_log(
+    root_path: Path,
+    *,
+    task_id: str,
+    report: MetricsReport,
+    artifact_path: Path | None,
+) -> None:
     """Append a fresh summary line for the task to the supervisor log."""
 
     short_id = task_id.split("-", maxsplit=1)[0]
@@ -124,12 +147,15 @@ def append_task_log(root_path: Path, *, task_id: str, report: MetricsReport, art
     log_path.parent.mkdir(parents=True, exist_ok=True)
     level = "info" if report.summary.failed == 0 else "warning"
     status = "success" if report.summary.failed == 0 else "warning"
-    log_entries = [
+    log_entries: list[dict[str, str]] = [
         {
             "timestamp": _timestamp(),
             "phase": "execution",
             "level": level,
-            "message": f"Phase ended: execution ({status}) — Metrics: {report.summary.passed}/{report.summary.total} passed",
+            "message": (
+                f"Phase ended: execution ({status}) — Metrics: "
+                f"{report.summary.passed}/{report.summary.total} passed"
+            ),
         }
     ]
     if artifact_path is not None:
@@ -151,11 +177,26 @@ def append_task_log(root_path: Path, *, task_id: str, report: MetricsReport, art
 def main(argv: list[str] | None = None) -> int:
     """Run the repo metrics collector CLI."""
 
-    parser = argparse.ArgumentParser(description="Run repo verify checks and emit a machine-readable metrics report.")
-    parser.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root path. Defaults to the current working directory.")
-    parser.add_argument("--task-id", help="Optional supervisor task id used to choose default artifact and log paths.")
+    parser = argparse.ArgumentParser(
+        description="Run repo verify checks and emit a machine-readable metrics report."
+    )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path.cwd(),
+        help="Repository root path. Defaults to the current working directory.",
+    )
+    parser.add_argument(
+        "--task-id",
+        help="Optional supervisor task id used to choose default artifact and log paths.",
+    )
     parser.add_argument("--output", type=Path, help="Optional path for the JSON metrics artifact.")
-    parser.add_argument("--timeout-seconds", type=int, default=600, help="Per-check timeout in seconds.")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=600,
+        help="Per-check timeout in seconds.",
+    )
     parser.add_argument(
         "--check",
         choices=("lint", "typecheck", "build", "tests", "coverage", "browser_tests"),
@@ -165,7 +206,11 @@ def main(argv: list[str] | None = None) -> int:
 
     root_path = args.root.resolve()
     try:
-        report = collect_metrics(root_path, timeout_seconds=args.timeout_seconds, selected_check=args.check)
+        report = collect_metrics(
+            root_path,
+            timeout_seconds=args.timeout_seconds,
+            selected_check=args.check,
+        )
     except MetricsConfigurationError as exc:
         sys.stderr.write(f"{exc}\n")
         return 1
@@ -180,7 +225,12 @@ def main(argv: list[str] | None = None) -> int:
     output_path = _resolve_output_path(root_path, task_id=args.task_id, output_path=args.output)
     write_report(final_report, output_path)
     if args.task_id:
-        append_task_log(root_path, task_id=args.task_id, report=final_report, artifact_path=output_path)
+        append_task_log(
+            root_path,
+            task_id=args.task_id,
+            report=final_report,
+            artifact_path=output_path,
+        )
 
     return 0 if final_report.summary.failed == 0 else 1
 
@@ -189,7 +239,7 @@ def _optional_command(value: object) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        raise ValueError("Verify commands must be strings or null")
+        raise MetricsConfigurationError("Verify commands must be strings or null")
     stripped = value.strip()
     return stripped or None
 
@@ -211,7 +261,14 @@ def _iter_checks(config: VerifyConfig) -> tuple[tuple[str, str, str], ...]:
     return tuple(checks)
 
 
-def _run_check(root_path: Path, *, category: str, name: str, command: str, timeout_seconds: int) -> MetricCheck:
+def _run_check(
+    root_path: Path,
+    *,
+    category: str,
+    name: str,
+    command: str,
+    timeout_seconds: int,
+) -> MetricCheck:
     started_at = datetime.now(timezone.utc)
     result = subprocess.run(
         command,
@@ -236,7 +293,12 @@ def _run_check(root_path: Path, *, category: str, name: str, command: str, timeo
     )
 
 
-def _resolve_output_path(root_path: Path, *, task_id: str | None, output_path: Path | None) -> Path | None:
+def _resolve_output_path(
+    root_path: Path,
+    *,
+    task_id: str | None,
+    output_path: Path | None,
+) -> Path | None:
     if output_path is not None:
         return output_path.resolve()
     if task_id is None:

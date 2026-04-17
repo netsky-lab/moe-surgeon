@@ -194,6 +194,26 @@ def test_deterministic_default_json_for_default_manifest_instances() -> None:
     assert to_json(first) == to_json(second)
 
 
+def test_manifest_canonical_digest_ignores_runtime_timestamps() -> None:
+    first = RunArtifactManifest(
+        run_id="run-001",
+        command="scan",
+        started_at="2026-04-17T12:00:00+00:00",
+        finished_at="2026-04-17T12:05:00+00:00",
+        metadata={"artifact_kind": "scan"},
+    )
+    second = RunArtifactManifest(
+        run_id="run-001",
+        command="scan",
+        started_at="2026-04-18T12:00:00+00:00",
+        finished_at="2026-04-18T12:05:00+00:00",
+        metadata={"artifact_kind": "scan"},
+    )
+
+    assert first.canonical_digest == second.canonical_digest
+    assert first.versioned_manifest_id != second.versioned_manifest_id
+
+
 def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
     plan = PrunePlan.from_dict(
         {

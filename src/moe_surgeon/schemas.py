@@ -888,10 +888,28 @@ class RunArtifactManifest(_SchemaBase):
             raise SchemaValidationError("run_plan must be PrunePlan")
         self.metadata = _canonicalize_metadata(self.metadata)
 
+    def canonical_digest_payload(self) -> Dict[str, Any]:
+        """Return a timestamp-free manifest payload for reproducible hashing."""
+
+        payload = self.to_dict()
+        payload["started_at"] = CANONICAL_DEFAULT_TIMESTAMP
+        payload["finished_at"] = None
+        metadata = dict(self.metadata)
+        metadata.pop("canonical_manifest_digest", None)
+        metadata.pop("canonical_artifact_digest", None)
+        payload["metadata"] = metadata
+        return payload
+
     @property
     def versioned_manifest_id(self) -> str:
         key = f"{self.schema_version}:{self.run_id}:{self.command}:{self.started_at}"
         return sha256(key.encode("utf-8")).hexdigest()
+
+    @property
+    def canonical_digest(self) -> str:
+        """Return a timestamp-free digest for reproducible manifests."""
+
+        return sha256(to_json(self.canonical_digest_payload()).encode("utf-8")).hexdigest()
 
 
 SchemaType = Union[

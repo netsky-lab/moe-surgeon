@@ -8,10 +8,10 @@
     "browserTestCommand": null
   },
   "repoMetricsConfig": {
-    "lintCommand": "npm run lint",
-    "typeCheckCommand": "npm run typecheck",
+    "lintCommand": "python -m ruff check src tests",
+    "typeCheckCommand": "python -m mypy src",
     "buildCommand": null,
-    "testCommand": "npm test",
+    "testCommand": "python -m pytest",
     "coverageCommand": null,
     "browserTestCommand": null
   }

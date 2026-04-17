@@ -26,6 +26,51 @@ def _load_repo_metrics_config() -> dict[str, str | None]:
     return metrics_config
 
 
+def _write_project_json(
+    root: Path,
+    *,
+    include_verify_config: bool = False,
+    typecheck_command: str | None = None,
+) -> None:
+    supervisor_dir = root / ".supervisor"
+    supervisor_dir.mkdir(parents=True, exist_ok=True)
+    metrics_config = {
+        "lintCommand": f'{sys.executable} -c "print(\'lint-ok\')"',
+        "typeCheckCommand": (
+            f'{sys.executable} -c "print(\'typecheck-ok\')"'
+            if typecheck_command is None
+            else typecheck_command
+        ),
+        "buildCommand": None,
+        "testCommand": f'{sys.executable} -c "print(\'tests-ok\')"',
+        "coverageCommand": None,
+        "browserTestCommand": None,
+    }
+    payload: dict[str, object] = {"repoMetricsConfig": metrics_config}
+    if include_verify_config:
+        payload["verifyConfig"] = {
+            "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
+            "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
+            "buildCommand": None,
+            "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
+            "coverageCommand": None,
+            "browserTestCommand": None,
+        }
+    (supervisor_dir / "project.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _run_repo_metrics(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "moe_surgeon.repo_metrics", "--root", str(root), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
 def test_supervisor_verify_config_uses_repo_metrics_entrypoint() -> None:
     verify_config = _load_supervisor_verify_config()
     metrics_config = _load_repo_metrics_config()
@@ -39,10 +84,10 @@ def test_supervisor_verify_config_uses_repo_metrics_entrypoint() -> None:
         "browserTestCommand": None,
     }
     assert metrics_config == {
-        "lintCommand": "npm run lint",
-        "typeCheckCommand": "npm run typecheck",
+        "lintCommand": "python -m ruff check src tests",
+        "typeCheckCommand": "python -m mypy src",
         "buildCommand": None,
-        "testCommand": "npm test",
+        "testCommand": "python -m pytest",
         "coverageCommand": None,
         "browserTestCommand": None,
     }
@@ -58,7 +103,7 @@ def test_ci_workflow_runs_repo_metrics_entrypoint() -> None:
 
 
 def test_collect_metrics_uses_repo_supervisor_config_and_emits_typecheck(
-    monkeypatch: object,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     recorded_calls: list[tuple[str, str, str, int]] = []
@@ -89,67 +134,52 @@ def test_collect_metrics_uses_repo_supervisor_config_and_emits_typecheck(
 
     assert [check.name for check in report.checks] == ["lint", "typecheck", "tests"]
     assert [check.category for check in report.checks] == ["code_quality", "code_quality", "tests"]
-    assert [check.command for check in report.checks] == ["npm run lint", "npm run typecheck", "npm test"]
+    assert [check.command for check in report.checks] == [
+        "python -m ruff check src tests",
+        "python -m mypy src",
+        "python -m pytest",
+    ]
     assert report.summary == repo_metrics.MetricSummary(total=3, passed=3, failed=0)
     assert recorded_calls == [
-        ("code_quality", "lint", "npm run lint", 7),
-        ("code_quality", "typecheck", "npm run typecheck", 7),
-        ("tests", "tests", "npm test", 7),
+        ("code_quality", "lint", "python -m ruff check src tests", 7),
+        ("code_quality", "typecheck", "python -m mypy src", 7),
+        ("tests", "tests", "python -m pytest", 7),
     ]
+
+
+def test_repo_metrics_resolves_all_named_checks_in_deterministic_order(tmp_path: Path) -> None:
+    _write_project_json(tmp_path)
+
+    result = _run_repo_metrics(tmp_path)
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "tests"]
+    assert [check["category"] for check in payload["checks"]] == [
+        "code_quality",
+        "code_quality",
+        "tests",
+    ]
+    assert [check["output"] for check in payload["checks"]] == ["lint-ok", "typecheck-ok", "tests-ok"]
+    assert payload["summary"] == {"total": 3, "passed": 3, "failed": 0}
 
 
 def test_repo_metrics_collector_emits_named_checks_and_refreshes_task_log(tmp_path: Path) -> None:
     root_path = tmp_path
-    supervisor_dir = root_path / ".supervisor"
-    logs_dir = supervisor_dir / "logs"
+    logs_dir = root_path / ".supervisor" / "logs"
     logs_dir.mkdir(parents=True)
     task_id = "abc12345-1111-2222-3333-444444444444"
     task_log = logs_dir / "task-abc12345.log"
     task_log.write_text("", encoding="utf-8")
-    project_json = supervisor_dir / "project.json"
-    project_json.write_text(
-        json.dumps(
-            {
-                "verifyConfig": {
-                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
-                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-                "repoMetricsConfig": {
-                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
-                    "typeCheckCommand": f"{sys.executable} -c \"print('typecheck ok')\"",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_project_json(root_path, include_verify_config=True)
     output_path = logs_dir / "task-abc12345.metrics.json"
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "moe_surgeon.repo_metrics",
-            "--root",
-            str(root_path),
-            "--task-id",
-            task_id,
-            "--output",
-            str(output_path),
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
+    result = _run_repo_metrics(
+        root_path,
+        "--task-id",
+        task_id,
+        "--output",
+        str(output_path),
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
@@ -168,51 +198,9 @@ def test_repo_metrics_collector_emits_named_checks_and_refreshes_task_log(tmp_pa
 
 
 def test_repo_metrics_collector_single_check_uses_same_entrypoint(tmp_path: Path) -> None:
-    root_path = tmp_path
-    supervisor_dir = root_path / ".supervisor"
-    supervisor_dir.mkdir(parents=True)
-    project_json = supervisor_dir / "project.json"
-    project_json.write_text(
-        json.dumps(
-            {
-                "verifyConfig": {
-                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
-                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-                "repoMetricsConfig": {
-                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
-                    "typeCheckCommand": f"{sys.executable} -c \"print('typecheck ok')\"",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_project_json(tmp_path, include_verify_config=True)
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "moe_surgeon.repo_metrics",
-            "--root",
-            str(root_path),
-            "--check",
-            "typecheck",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_repo_metrics(tmp_path, "--check", "typecheck")
 
     assert result.returncode == 0, result.stderr or result.stdout
     payload = json.loads(result.stdout)
@@ -221,59 +209,64 @@ def test_repo_metrics_collector_single_check_uses_same_entrypoint(tmp_path: Path
 
 
 def test_repo_metrics_collector_single_check_fails_when_missing(tmp_path: Path) -> None:
-    root_path = tmp_path
-    supervisor_dir = root_path / ".supervisor"
-    supervisor_dir.mkdir(parents=True)
-    project_json = supervisor_dir / "project.json"
-    project_json.write_text(
-        json.dumps(
-            {
-                "verifyConfig": {
-                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
-                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-                "repoMetricsConfig": {
-                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
-                    "typeCheckCommand": None,
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_project_json(tmp_path, include_verify_config=True, typecheck_command=None)
+    project_json = tmp_path / ".supervisor" / "project.json"
+    payload = json.loads(project_json.read_text(encoding="utf-8"))
+    repo_metrics_config = payload["repoMetricsConfig"]
+    assert isinstance(repo_metrics_config, dict)
+    repo_metrics_config["typeCheckCommand"] = None
+    project_json.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "moe_surgeon.repo_metrics",
-            "--root",
-            str(root_path),
-            "--check",
-            "typecheck",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = _run_repo_metrics(tmp_path, "--check", "typecheck")
 
     assert result.returncode != 0
     assert result.stdout == ""
     assert "Requested check 'typecheck' is not configured" in result.stderr
 
 
+def test_repo_metrics_runs_configured_lint_check(tmp_path: Path) -> None:
+    _write_project_json(tmp_path)
+
+    result = _run_repo_metrics(tmp_path, "--check", "lint")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [check["name"] for check in payload["checks"]] == ["lint"]
+    assert payload["checks"][0]["command"] == f'{sys.executable} -c "print(\'lint-ok\')"'
+    assert payload["checks"][0]["output"] == "lint-ok"
+    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
+def test_repo_metrics_runs_configured_typecheck_check(tmp_path: Path) -> None:
+    _write_project_json(tmp_path)
+
+    result = _run_repo_metrics(tmp_path, "--check", "typecheck")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [check["name"] for check in payload["checks"]] == ["typecheck"]
+    assert payload["checks"][0]["command"] == f'{sys.executable} -c "print(\'typecheck-ok\')"'
+    assert payload["checks"][0]["output"] == "typecheck-ok"
+    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
+def test_repo_metrics_runs_configured_tests_check(tmp_path: Path) -> None:
+    _write_project_json(tmp_path)
+
+    result = _run_repo_metrics(tmp_path, "--check", "tests")
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert [check["name"] for check in payload["checks"]] == ["tests"]
+    assert payload["checks"][0]["command"] == f'{sys.executable} -c "print(\'tests-ok\')"'
+    assert payload["checks"][0]["output"] == "tests-ok"
+    assert payload["summary"] == {"total": 1, "passed": 1, "failed": 0}
+
+
 def test_actual_supervisor_collector_resolves_repo_config_with_typecheck() -> None:
-    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+    collector_path = Path(
+        "/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js"
+    )
     if not collector_path.exists():
         pytest.skip("supervisor collector dist build is not available")
 
@@ -314,46 +307,20 @@ console.log(JSON.stringify(verifyConfig));
 
 
 def test_actual_supervisor_collector_uses_repo_local_repo_metrics_fallback_shape(tmp_path: Path) -> None:
-    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+    collector_path = Path(
+        "/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js"
+    )
     if not collector_path.exists():
         pytest.skip("supervisor collector dist build is not available")
 
-    project_root = tmp_path
-    supervisor_dir = project_root / ".supervisor"
-    supervisor_dir.mkdir(parents=True)
-    (supervisor_dir / "project.json").write_text(
-        json.dumps(
-            {
-                "verifyConfig": {
-                    "lintCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check lint",
-                    "typeCheckCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check typecheck",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -m moe_surgeon.repo_metrics --check tests",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-                "repoMetricsConfig": {
-                    "lintCommand": f"{sys.executable} -c \"print('lint ok')\"",
-                    "typeCheckCommand": f"{sys.executable} -c \"print('typecheck ok')\"",
-                    "buildCommand": None,
-                    "testCommand": f"{sys.executable} -c \"print('tests ok')\"",
-                    "coverageCommand": None,
-                    "browserTestCommand": None,
-                },
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    _write_project_json(tmp_path, include_verify_config=True)
 
     probe = f"""
 import {{ collectMetrics }} from {json.dumps(str(collector_path))};
 
 const metrics = await collectMetrics(
   {{
-    rootPath: {json.dumps(str(project_root))},
+    rootPath: {json.dumps(str(tmp_path))},
     verifyConfig: null
   }},
   "taskid",
@@ -375,18 +342,21 @@ console.log(JSON.stringify(metrics));
     assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "test_suite"]
 
 
-def test_actual_supervisor_collector_prefers_persisted_verify_config_over_repo_local_file(tmp_path: Path) -> None:
-    collector_path = Path("/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js")
+def test_actual_supervisor_collector_prefers_persisted_verify_config_over_repo_local_file(
+    tmp_path: Path,
+) -> None:
+    collector_path = Path(
+        "/home/netsky/dev/labs/codex-supervisor-rails/apps/agent/dist/metrics-collector.js"
+    )
     if not collector_path.exists():
         pytest.skip("supervisor collector dist build is not available")
 
-    project_root = tmp_path
     persisted_lint_command = sys.executable + " -c \"print('lint via persisted state')\""
     persisted_test_command = sys.executable + " -c \"print('tests via persisted state')\""
     repo_lint_command = sys.executable + " -c \"print('lint via repo file')\""
     repo_typecheck_command = sys.executable + " -c \"print('typecheck via repo file')\""
     repo_test_command = sys.executable + " -c \"print('tests via repo file')\""
-    supervisor_dir = project_root / ".supervisor"
+    supervisor_dir = tmp_path / ".supervisor"
     supervisor_dir.mkdir(parents=True)
     (supervisor_dir / "project.json").write_text(
         json.dumps(
@@ -412,7 +382,7 @@ import {{ collectMetrics }} from {json.dumps(str(collector_path))};
 
 const metrics = await collectMetrics(
   {{
-    rootPath: {json.dumps(str(project_root))},
+    rootPath: {json.dumps(str(tmp_path))},
     verifyConfig: {{
       lintCommand: {json.dumps(persisted_lint_command)},
       typeCheckCommand: null,

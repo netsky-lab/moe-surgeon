@@ -30,6 +30,9 @@
   supervisor wiring, emitted metrics artifacts, and single-check collector mode.
 - Updated `README.md` to describe the repo-owned metrics collector and its
   machine-readable output.
+- Added canonical static scan artifact helpers in `src/moe_surgeon/analysis/scan.py` for sorted JSON payload emission, timestamp-free content digests, and byte-identical repeated writes from identical inputs.
+- Added timestamp-independent `RunArtifactManifest.canonical_digest` support in `src/moe_surgeon/schemas.py` and surfaced stable scan manifest metadata for `model_fingerprint`, `canonical_manifest_digest`, and `canonical_artifact_digest`.
+- Updated `src/moe_surgeon/cli/main.py` scan placeholder text to point at the canonical scan artifact helpers and expanded regression coverage in `tests/test_analysis_scan.py` and `tests/test_schemas.py`.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented
@@ -47,6 +50,11 @@
   explicit unsupported-Transformers runtime guard for local `transformers 4.51.3`.
 - Implemented explicit Gemma 4 MoE layer traversal in `src/moe_surgeon/models/gemma4.py`, including deterministic ordered MoE layer enumeration, config-vs-state tensor-key discovery, and fail-fast diagnostics for unexpected or incomplete MoE layer key sets.
 - Expanded `tests/test_models_gemma4.py` with offline regression coverage for ordered MoE key traversal, non-MoE layer rejection, and unexpected layer-prefix mismatch handling.
+## 2026-04-17
+- Added static router metric helpers in `src/moe_surgeon/analysis/metrics.py` that upcast router math to stable float64, derive deterministic expert distributions from `router.proj.weight`, and compute per-expert mass, entropy, top-k proxy, and optional `router.per_expert_scale` norms without using deprecated PyTorch norm APIs.
+- Added backend-driven static scan assembly in `src/moe_surgeon/analysis/scan.py` that reads ordered Gemma4 MoE layers from backend topology, loads router tensors strictly through `LayerTopology.module_paths`, emits one `RouterState` per MoE layer, and fails fast when only topology metadata is available without materialized numeric tensors.
+- Added focused scan regression coverage in `tests/test_analysis_scan.py` for deterministic ranking, finite metrics, normalized per-layer mass, and the topology-only metadata failure path.
+
 - Hardened `src/moe_surgeon/models/gemma4.py` to require Gemma4 hybrid decoder-layer companion tensors (`mlp.*` and feedforward norms) alongside router/expert tensors during topology validation and to enforce exact expert tensor layouts from `moe_intermediate_size`.
 - Extended `tests/test_models_gemma4.py` so synthetic Gemma4 layers model the published hybrid topology and regressions cover missing dense hybrid keys, wrong `moe_intermediate_size`, and invalid expert tensor rank failures.
 
@@ -96,6 +104,10 @@
   preserving `python -m moe_surgeon` help-only execution.
 - Expanded CLI regression coverage for package metadata exposure, wrapper-based
   help rendering, and heavy dependency avoidance on the help path.
+
+## 2026-04-17
+- Completed P5 static router metric hardening in `src/moe_surgeon/analysis/metrics.py` and `src/moe_surgeon/analysis/scan.py` by deriving deterministic softmax-based expert distributions, replacing unstable `topk` tie handling with stable sorting, and adding an aggregate scan summary over ordered MoE layers.
+- Expanded `tests/test_analysis_scan.py` with deterministic tie-case coverage, aggregate-summary assertions, and scan regression checks for finite non-negative expert metrics.
 
 ## 2026-04-17
 - Hardened the executable module entrypoint in `src/moe_surgeon/__main__.py` by exposing a stable module-level `main()` wrapper that delegates to the lightweight Click bootstrap with the canonical `python -m moe_surgeon` program name.
