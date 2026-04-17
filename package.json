@@ -5,6 +5,6 @@
   "type": "module",
   "scripts": {
     "test": "node --test src/**/*.test.js",
-    "lint": "echo ok"
+    "lint": "python -m ruff check src tests"
   }
 }

@@ -13,6 +13,7 @@ from moe_surgeon.schemas import (
     TopologyMismatchError,
     ShapeInvariantViolationError,
     LayerReferenceError,
+    SchemaValidationError,
     to_json,
     from_json,
     sort_experts,
@@ -189,3 +190,66 @@ def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
     )
     assert isinstance(plan.per_layer_plans, tuple)
     assert plan.per_layer_plans[0].keep_indices == (0, 1)
+
+
+def test_from_json_rejects_unknown_schema_type() -> None:
+    with pytest.raises(SchemaValidationError, match="Unsupported __schema_type"):
+        from_json('{"__schema_type":"UnknownSchema","value":1}')
+
+
+def test_from_json_rejects_mapping_without_schema_type() -> None:
+    with pytest.raises(SchemaValidationError, match="Unsupported mapping payload"):
+        from_json({"plan_id": "plan-001"})
+
+
+def test_prune_plan_from_dict_rejects_non_mapping_plan_items() -> None:
+    with pytest.raises(SchemaValidationError, match="per_layer_plans entries must be mappings"):
+        PrunePlan.from_dict(
+            {
+                "plan_id": "plan-001",
+                "model_signature": "sig",
+                "per_layer_plans": ["bad-item"],
+            }
+        )
+
+
+def test_prune_plan_from_dict_rejects_invalid_tuple_payloads() -> None:
+    with pytest.raises(SchemaValidationError, match="keep_indices contains invalid entry"):
+        PrunePlan.from_dict(
+            {
+                "plan_id": "plan-001",
+                "model_signature": "sig",
+                "per_layer_plans": [
+                    {
+                        "layer_index": 0,
+                        "keep_indices": [0, "1"],
+                        "drop_indices": [],
+                    }
+                ],
+            }
+        )
+
+
+def test_manifest_from_dict_rejects_invalid_run_plan_payload() -> None:
+    with pytest.raises(SchemaValidationError, match="per_layer_plans entries must be mappings"):
+        RunArtifactManifest.from_dict(
+            {
+                "run_id": "run-001",
+                "command": "scan",
+                "run_plan": {
+                    "plan_id": "plan-001",
+                    "per_layer_plans": ["bad-item"],
+                },
+            }
+        )
+
+
+def test_manifest_from_dict_rejects_invalid_model_handle_payload() -> None:
+    with pytest.raises(SchemaValidationError, match="Missing required field 'model_id' for ModelHandle"):
+        RunArtifactManifest.from_dict(
+            {
+                "run_id": "run-001",
+                "command": "scan",
+                "model_handle": {"seed": 7},
+            }
+        )
