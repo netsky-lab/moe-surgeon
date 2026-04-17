@@ -6,5 +6,13 @@
       "define-canonical-data-contracts-and-json-serialization-schema"
     ],
     "timestamp": "2026-04-17T04:10:02.954Z"
+  },
+  {
+    "taskTitle": "Bootstrap typed package entrypoints and CLI scaffold",
+    "summary": "[Finalize package metadata and entrypoint wiring]: **Execution Summary**\n\nSubtask status:\n1. Done\n2. Done\n3. Done\n\nChanged files:\n- [pyproject.toml](/home/netsky/dev/labs/moe-surgeon/pyproject.toml): added `project.scripts` for `moe-surgeon`, tightened package discovery to `src/moe_surgeon*`, and ke",
+    "tags": [
+      "bootstrap-typed-package-entrypoints-and-cli-scaffold"
+    ],
+    "timestamp": "2026-04-17T04:31:12.756Z"
   }
 ]
