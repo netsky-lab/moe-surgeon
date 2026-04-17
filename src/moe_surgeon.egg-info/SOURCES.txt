@@ -1,5 +1,6 @@
 README.md
 pyproject.toml
+src/sitecustomize.py
 src/moe_surgeon/__init__.py
 src/moe_surgeon/__main__.py
 src/moe_surgeon/repo_metrics.py
@@ -25,6 +26,7 @@ src/moe_surgeon/models/registry.py
 src/moe_surgeon/prune/__init__.py
 src/moe_surgeon/prune/planner.py
 src/moe_surgeon/prune/strategies.py
+src/moe_surgeon/prune/strategy.py
 src/moe_surgeon/runtime/__init__.py
 src/moe_surgeon/runtime/bench.py
 src/moe_surgeon/runtime/profiler.py

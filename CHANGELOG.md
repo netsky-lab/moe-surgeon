@@ -194,6 +194,23 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Made the direct quality gates hermetic across tempdir- and
+  cache-constrained environments by adding an installed `src/sitecustomize.py`
+  startup bootstrap that activates only inside this repo, repairs unusable
+  `TMPDIR`/`TMP`/`TEMP` values before `python -m pytest`, `python -m ruff`, or
+  `python -m mypy` startup, disables ambient pytest plugin autoload, exports
+  `RUFF_NO_CACHE=true`, and points mypy cache writes at the platform null
+  device.
+- Extended `src/moe_surgeon/test_env.py` and
+  `src/moe_surgeon/repo_metrics.py` so the `.supervisor` repo-metrics path
+  applies the same repo-owned tempdir and cache defaults to lint and
+  typecheck, while test subprocesses continue to pin `.tmp/pytest`.
+- Added hostile-environment subprocess regressions in
+  `tests/test_repo_metrics.py` covering both the direct-command path and the
+  repo-metrics path with broken temp env plus read-only Ruff and mypy cache
+  directories.
+- Updated `pyproject.toml` and `README.md` so the installed startup hook and
+  cache-free direct quality-gate behavior match the real command surface.
 - Added a second `_require_live_gemma4_runtime()` regression in `tests/test_runtime_profiler.py` covering supported-floor Transformers installs that still lack Gemma4 symbols, asserting the helper skips through the same shared remediation diagnostics used by the below-floor branch.
 
 ## 2026-04-17

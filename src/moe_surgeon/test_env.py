@@ -1,4 +1,4 @@
-"""Repo-local helpers for deterministic pytest subprocess isolation."""
+"""Repo-local helpers for deterministic quality-gate subprocess isolation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,62 @@ from pathlib import Path
 from typing import MutableMapping
 
 
+REPO_PROCESS_TEMP_SUBDIR = Path(".tmp") / "system"
 REPO_PYTEST_TEMP_SUBDIR = Path(".tmp") / "pytest"
+TEMP_ENV_KEYS = ("TMPDIR", "TMP", "TEMP")
+REPO_ROOT_MARKERS = (
+    "pyproject.toml",
+    "AGENTS.md",
+    ".supervisor/project.json",
+    "src/moe_surgeon/repo_metrics.py",
+)
+
+
+def bootstrap_repo_quality_gate_env(start_path: Path | None = None) -> None:
+    """Apply repo-local quality-gate defaults when the current cwd is inside this repo."""
+
+    candidate = Path.cwd() if start_path is None else start_path.resolve()
+    root_path = find_repo_root(candidate)
+    if root_path is None:
+        return
+
+    apply_quality_gate_env(root_path)
+
+
+def find_repo_root(start_path: Path) -> Path | None:
+    """Find the repository root by walking upward from ``start_path``."""
+
+    search_path = start_path if start_path.is_dir() else start_path.parent
+    for candidate in (search_path, *search_path.parents):
+        if all((candidate / marker).exists() for marker in REPO_ROOT_MARKERS):
+            return candidate
+    return None
+
+
+def apply_quality_gate_env(
+    root_path: Path,
+    *,
+    env: MutableMapping[str, str] | None = None,
+    prefer_pytest_temp: bool = False,
+) -> MutableMapping[str, str]:
+    """Apply repo-local tempdir and cache defaults for quality-gate subprocesses."""
+
+    target_env = os.environ if env is None else env
+    target_env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
+    target_env.setdefault("RUFF_NO_CACHE", "true")
+    target_env.setdefault("MYPY_CACHE_DIR", os.devnull)
+
+    if not has_usable_tempdir(target_env):
+        repo_temp_dir = (
+            ensure_repo_pytest_tempdir(root_path)
+            if prefer_pytest_temp
+            else ensure_repo_process_tempdir(root_path)
+        )
+        repo_temp = str(repo_temp_dir)
+        for key in TEMP_ENV_KEYS:
+            target_env[key] = repo_temp
+
+    return target_env
 
 
 def apply_pytest_isolation(
@@ -15,22 +70,24 @@ def apply_pytest_isolation(
     *,
     env: MutableMapping[str, str] | None = None,
 ) -> MutableMapping[str, str]:
-    """Disable ambient pytest plugins and provide a repo-managed temp dir."""
+    """Disable ambient pytest plugins and pin a repo-managed pytest temp dir."""
 
-    target_env = os.environ if env is None else env
-    target_env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
-
-    if not has_usable_tempdir(target_env):
-        repo_temp_dir = ensure_repo_tempdir(root_path)
-        repo_temp = str(repo_temp_dir)
-        target_env["TMPDIR"] = repo_temp
-        target_env["TMP"] = repo_temp
-        target_env["TEMP"] = repo_temp
-
+    target_env = apply_quality_gate_env(root_path, env=env, prefer_pytest_temp=True)
+    repo_temp = str(ensure_repo_pytest_tempdir(root_path))
+    for key in TEMP_ENV_KEYS:
+        target_env[key] = repo_temp
     return target_env
 
 
-def ensure_repo_tempdir(root_path: Path) -> Path:
+def ensure_repo_process_tempdir(root_path: Path) -> Path:
+    """Create and return the repo-managed process temp directory."""
+
+    repo_temp_dir = root_path / REPO_PROCESS_TEMP_SUBDIR
+    repo_temp_dir.mkdir(parents=True, exist_ok=True)
+    return repo_temp_dir
+
+
+def ensure_repo_pytest_tempdir(root_path: Path) -> Path:
     """Create and return the repo-managed pytest temp directory."""
 
     repo_temp_dir = root_path / REPO_PYTEST_TEMP_SUBDIR
@@ -41,7 +98,7 @@ def ensure_repo_tempdir(root_path: Path) -> Path:
 def has_usable_tempdir(env: MutableMapping[str, str]) -> bool:
     """Return whether the current tempdir environment points to a writable dir."""
 
-    for key in ("TMPDIR", "TMP", "TEMP"):
+    for key in TEMP_ENV_KEYS:
         value = env.get(key)
         if value and _is_writable_directory(Path(value).expanduser()):
             return True

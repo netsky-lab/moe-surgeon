@@ -11,7 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from moe_surgeon.test_env import apply_pytest_isolation
+from moe_surgeon.test_env import apply_pytest_isolation, apply_quality_gate_env
 
 
 @dataclass(frozen=True)
@@ -305,12 +305,14 @@ def _build_check_env(
     name: str,
     command: str,
 ) -> dict[str, str] | None:
-    if category != "tests" or name != "tests":
-        return None
-
     env = dict(os.environ)
-    apply_pytest_isolation(root_path, env=env)
-    return env
+    if category == "tests" and name == "tests":
+        apply_pytest_isolation(root_path, env=env)
+        return env
+    if category == "code_quality" and name in {"lint", "typecheck"}:
+        apply_quality_gate_env(root_path, env=env)
+        return env
+    return None
 
 
 def _resolve_output_path(

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import stat
 import subprocess
 import sys
 
@@ -99,6 +100,100 @@ def _run_repo_pytest(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _write_quality_gate_fixture_repo(
+    root: Path,
+    *,
+    include_supervisor_config: bool = False,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    src_dir = root / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "sitecustomize.py").write_text(
+        (repo_root / "src" / "sitecustomize.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (root / "pyproject.toml").write_text(
+        """
+[tool.mypy]
+python_version = "3.11"
+incremental = false
+
+[tool.pytest.ini_options]
+addopts = ["--disable-plugin-autoload", "--basetemp=.tmp/pytest"]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "sample.py").write_text(
+        """
+def answer() -> int:
+    return 42
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    tests_dir = root / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_sample.py").write_text(
+        """
+from __future__ import annotations
+
+import os
+from pathlib import Path
+import tempfile
+
+from sample import answer
+
+
+def test_answer() -> None:
+    assert answer() == 42
+
+
+def test_bootstrap_tempdir() -> None:
+    expected = Path(os.environ["TMPDIR"])
+    assert Path(tempfile.gettempdir()) == expected
+    assert expected.name in {"system", "pytest"}
+    assert expected.is_dir()
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    if include_supervisor_config:
+        _write_project_json(
+            root,
+            lint_command="python -m ruff check sample.py tests",
+            typecheck_command="python -m mypy sample.py",
+            test_command="python -m pytest tests/test_sample.py -q",
+        )
+
+
+def _make_read_only_directory(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    path.chmod(
+        stat.S_IRUSR
+        | stat.S_IXUSR
+        | stat.S_IRGRP
+        | stat.S_IXGRP
+        | stat.S_IROTH
+        | stat.S_IXOTH
+    )
+
+
+def _quality_gate_env(root: Path) -> dict[str, str]:
+    broken_temp = str(root / "missing-temp-root")
+    python_path_entries = [str(root / "src")]
+    existing_python_path = os.environ.get("PYTHONPATH")
+    if existing_python_path:
+        python_path_entries.append(existing_python_path)
+    return {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(python_path_entries),
+        "TMPDIR": broken_temp,
+        "TMP": broken_temp,
+        "TEMP": broken_temp,
+    }
+
+
 def test_supervisor_verify_config_uses_repo_metrics_entrypoint() -> None:
     verify_config = _load_supervisor_verify_config()
     metrics_config = _load_repo_metrics_config()
@@ -131,6 +226,7 @@ def test_repo_pytest_config_disables_plugin_autoload_and_uses_repo_basetemp() ->
     assert '--basetemp=.tmp/pytest' in pyproject_text
     assert '--strict-markers' in pyproject_text
     assert 'not integration' in pyproject_text
+    assert 'incremental = false' in pyproject_text
     assert 'integration: opt-in tests that may access live external services or model artifacts' in (
         pyproject_text
     )
@@ -429,6 +525,13 @@ def test_repo_metrics_tests_check_reports_repo_test_failures_not_startup_noise(
 
 def test_direct_python_m_pytest_disables_ambient_plugins_and_uses_repo_tempdir() -> None:
     repo_root = Path(__file__).resolve().parents[1]
+    broken_temp = str(repo_root / "missing-temp-root")
+    env = {
+        **os.environ,
+        "TMPDIR": broken_temp,
+        "TMP": broken_temp,
+        "TEMP": broken_temp,
+    }
 
     result = subprocess.run(
         [
@@ -444,6 +547,7 @@ def test_direct_python_m_pytest_disables_ambient_plugins_and_uses_repo_tempdir()
         capture_output=True,
         text=True,
         cwd=repo_root,
+        env=env,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
@@ -452,6 +556,66 @@ def test_direct_python_m_pytest_disables_ambient_plugins_and_uses_repo_tempdir()
     assert "langsmith-" not in combined_output
     assert "benchmark-" not in combined_output
     assert (repo_root / ".tmp" / "pytest").is_dir()
+
+
+def test_direct_quality_gate_commands_are_hermetic_under_hostile_temp_and_cache_env(
+    tmp_path: Path,
+) -> None:
+    _write_quality_gate_fixture_repo(tmp_path)
+    _make_read_only_directory(tmp_path / ".ruff_cache")
+    _make_read_only_directory(tmp_path / ".mypy_cache")
+    env = _quality_gate_env(tmp_path)
+
+    pytest_result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_sample.py", "-q"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    ruff_result = subprocess.run(
+        [sys.executable, "-m", "ruff", "check", "sample.py", "tests"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+    mypy_result = subprocess.run(
+        [sys.executable, "-m", "mypy", "sample.py"],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert pytest_result.returncode == 0, pytest_result.stderr or pytest_result.stdout
+    assert ruff_result.returncode == 0, ruff_result.stderr or ruff_result.stdout
+    assert mypy_result.returncode == 0, mypy_result.stderr or mypy_result.stdout
+    assert (tmp_path / ".tmp" / "system").is_dir()
+    assert list((tmp_path / ".ruff_cache").iterdir()) == []
+    assert list((tmp_path / ".mypy_cache").iterdir()) == []
+
+
+def test_repo_metrics_quality_commands_are_hermetic_under_hostile_temp_and_cache_env(
+    tmp_path: Path,
+) -> None:
+    _write_quality_gate_fixture_repo(tmp_path, include_supervisor_config=True)
+    _make_read_only_directory(tmp_path / ".ruff_cache")
+    _make_read_only_directory(tmp_path / ".mypy_cache")
+    env = _quality_gate_env(tmp_path)
+
+    result = _run_repo_metrics(tmp_path, env=env)
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout)
+    assert [check["name"] for check in payload["checks"]] == ["lint", "typecheck", "tests"]
+    assert payload["summary"] == {"total": 3, "passed": 3, "failed": 0}
+    assert (tmp_path / ".tmp" / "system").is_dir()
+    assert list((tmp_path / ".ruff_cache").iterdir()) == []
+    assert list((tmp_path / ".mypy_cache").iterdir()) == []
 
 
 def test_actual_supervisor_collector_resolves_repo_config_with_typecheck() -> None:
