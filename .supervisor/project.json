@@ -1,5 +1,7 @@
 {
   "repoMetricsConfig": {
+    "lintCommand": "python -m ruff check src tests",
+    "typeCheckCommand": "python -m mypy src",
     "testCommand": "python -m pytest"
   }
 }
