@@ -45,14 +45,16 @@ moe_surgeon/
 
 The backend contract exposes:
 
-- supports(model_or_config) -> bool
-- load_model(...) -> loaded model handle
-- iter_moe_layers(...) -> iterable of LayerTopology
+- supports(BackendSignature) -> bool
+- load(...) -> LoadedBackendBundle
+- iter_layers(...) / extract_topology(...) -> ordered LayerTopology sequence
 - extract_router_state(...) -> RouterState
-- extract_expert_state(...) -> expert tensor mapping
-- validate_layer_mapping(...) -> invariants report
+- extract_expert_state(...) -> tensor metadata mapping
+- validate_bundle(...) / validate_layer(...) -> fail-fast invariants
 
-A registry resolves one backend per model and reports missing or ambiguous matches clearly.
+A registry resolves one backend per model/config signature with deterministic
+priority ordering, duplicate-name protection, and explicit unsupported or
+ambiguous-match diagnostics.
 
 ### Strategy pattern in prune
 

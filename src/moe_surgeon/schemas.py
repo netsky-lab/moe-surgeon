@@ -33,22 +33,16 @@ from typing import (
 import json
 import re
 
+from moe_surgeon.models.errors import (
+    SchemaValidationError,
+    ShapeInvariantViolationError,
+    TopologyMismatchError,
+)
+
 CANONICAL_SCHEMA_VERSION = "1.0.0"
 CANONICAL_DEFAULT_TIMESTAMP = "1970-01-01T00:00:00+00:00"
 CANONICAL_FLOAT_EPSILON = 1e-12
 _LAYER_REF_PATTERNS = (re.compile(r"^layer_(\d+)$"), re.compile(r"^module_(\d+)$"))
-
-
-class SchemaValidationError(ValueError):
-    """Base error for schema and contract violations."""
-
-
-class ShapeInvariantViolationError(SchemaValidationError):
-    """Raised when tensor-like metadata is malformed."""
-
-
-class TopologyMismatchError(SchemaValidationError):
-    """Raised when topology-level invariants cannot be satisfied."""
 
 
 class LayerReferenceError(SchemaValidationError):

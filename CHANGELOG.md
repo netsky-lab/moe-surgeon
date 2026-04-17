@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added lightweight backend contracts in `src/moe_surgeon/models/backend.py`
+  with `BackendSignature`, `LoadedBackendBundle`, `TensorMetadata`, and the
+  `ModelBackend` protocol aligned to shared schema dataclasses.
+- Added deterministic backend registration and resolution in
+  `src/moe_surgeon/models/registry.py`, including duplicate-name checks and
+  explicit unsupported/ambiguous backend diagnostics.
+- Centralized model-domain errors in `src/moe_surgeon/models/errors.py`,
+  preserved schema-compatible imports for topology/shape violations, and added
+  focused backend registry/error regression tests.
 - Added repository planning documentation for Python-first Moe-surgeon implementation.
 - Introduced `AGENTS.md` with collaboration and safety conventions.
 - Added `ROADMAP.md` backlog with priority-ordered tasks:
