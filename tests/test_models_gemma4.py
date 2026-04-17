@@ -18,11 +18,12 @@ from moe_surgeon.models.backend import (
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
 from moe_surgeon.models.gemma4 import (
     DEFAULT_REGISTRY_PRIORITY,
+    GEMMA4_MIN_TRANSFORMERS_VERSION,
+    GEMMA4_SUPPORT_ADDED_ON,
     Gemma4Backend,
-    _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
-    _MINIMUM_TRANSFORMERS_VERSION,
-    _SUPPORT_ADDED_DATE,
     default_registry_entry,
+    gemma4_runtime_guidance,
+    _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
 )
 from moe_surgeon.schemas import ModelHandle
 
@@ -80,6 +81,21 @@ def _bundle(*, config: dict[str, object], state_dict: dict[str, FakeTensor]) -> 
         config=config,
         metadata={"state_dict": state_dict, "backend_version": "1.0.0"},
     )
+
+
+def _assert_runtime_contract_diagnostics(
+    error: UnsupportedModelError,
+    *,
+    installed_version: str,
+    required_symbol: str = "Gemma4ForConditionalGeneration",
+) -> None:
+    message = str(error)
+    assert f"installed_transformers_version={installed_version}" in message
+    assert f"minimum_transformers_version={GEMMA4_MIN_TRANSFORMERS_VERSION}" in message
+    assert f"required_symbol={required_symbol}" in message
+    assert f"support_added_on={GEMMA4_SUPPORT_ADDED_ON}" in message
+    assert f"guidance={gemma4_runtime_guidance(installed_version)}" in message
+    assert "source=google/gemma-4-27b" in message
 
 
 def test_gemma4_module_import_is_lightweight_in_fresh_process() -> None:
@@ -220,6 +236,20 @@ def test_gemma4_backend_router_and_expert_state_validate_shapes() -> None:
     backend.validate_layer(bundle, layer=layer, router_state=router_state)
 
 
+def test_gemma4_backend_accepts_hidden_size_router_scale_shape() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    state_dict["model.language_model.layers.0.router.scale"] = FakeTensor((2816,))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    layer = backend.extract_topology(bundle)[0]
+    router_state = backend.extract_router_state(bundle, layer=layer)
+
+    assert router_state.projection_shape == (128, 2816)
+    backend.validate_layer(bundle, layer=layer, router_state=router_state)
+
+
 def test_gemma4_backend_resolves_runtime_router_module_from_topology() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[0])
@@ -336,20 +366,19 @@ def test_gemma4_backend_load_populates_model_handle_metadata_with_monkeypatched_
     monkeypatch.setattr(
         Gemma4Backend,
         "_installed_version",
-        lambda self, package_name: {"transformers": "5.5.0", "torch": "2.5.1"}.get(package_name),
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
     )
 
     bundle = backend.load(signature, dtype="bfloat16", seed=7)
 
     assert bundle.model_handle.revision == "rev-123"
-    assert bundle.model_handle.framework_version == "5.5.0"
+    assert bundle.model_handle.framework_version == "5.5.4"
     assert bundle.model_handle.dtype == "torch.bfloat16"
     assert bundle.model_handle.metadata["backend_version"] == backend.backend_version
     assert bundle.model_handle.metadata["torch_dtype"] == "torch.bfloat16"
     assert bundle.metadata["backend_version"] == backend.backend_version
 
-
-def test_gemma4_backend_load_raises_actionable_error_when_transformers_is_below_floor(
+def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = Gemma4Backend()
@@ -358,54 +387,68 @@ def test_gemma4_backend_load_raises_actionable_error_when_transformers_is_below_
     def fake_import_module(name: str) -> object:
         if name == "transformers":
             return SimpleNamespace(AutoTokenizer=object())
+        if name == "torch":
+            return SimpleNamespace()
         raise AssertionError(name)
 
     monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
     monkeypatch.setattr(
         Gemma4Backend,
         "_installed_version",
-        lambda self, package_name: {"transformers": "4.51.3", "torch": "2.5.1"}.get(package_name),
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
     )
 
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
         backend.load(signature)
 
-    message = str(exc_info.value)
-    assert "installed_transformers_version=4.51.3" in message
-    assert f"minimum_transformers_version={_MINIMUM_TRANSFORMERS_VERSION}" in message
+    _assert_runtime_contract_diagnostics(exc_info.value, installed_version="5.5.4")
     assert (
-        f"minimum_transformers_pypi_release_date={_MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE}" in message
+        f"minimum_transformers_pypi_release_date={_MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE}"
+        in str(exc_info.value)
     )
-    assert "required_symbol=Gemma4ForConditionalGeneration" in message
-    assert f"support_added_on={_SUPPORT_ADDED_DATE}" in message
-    assert "Install transformers>=5.5.0" in message
 
 
-def test_gemma4_backend_load_raises_actionable_error_when_symbols_are_missing_at_supported_floor(
+def test_gemma4_backend_load_rejects_transformers_below_minimum_support_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     backend = Gemma4Backend()
     signature = BackendSignature.from_mapping(_gemma4_config())
 
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, source: str, revision: str | None = None, torch_dtype: object | None = None) -> object:
+            raise AssertionError("version floor should reject before model loading")
+
+    class FakeTokenizerClass:
+        @classmethod
+        def from_pretrained(cls, source: str, revision: str | None = None) -> object:
+            raise AssertionError("version floor should reject before tokenizer loading")
+
     def fake_import_module(name: str) -> object:
         if name == "transformers":
-            return SimpleNamespace(AutoTokenizer=object())
+            return SimpleNamespace(
+                Gemma4ForConditionalGeneration=FakeModelClass,
+                AutoTokenizer=FakeTokenizerClass,
+            )
+        if name == "torch":
+            return SimpleNamespace(float32="fake-float32")
         raise AssertionError(name)
 
     monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
     monkeypatch.setattr(
         Gemma4Backend,
         "_installed_version",
-        lambda self, package_name: {"transformers": "5.5.0", "torch": "2.5.1"}.get(package_name),
+        lambda self, package_name: {"transformers": "5.4.9", "torch": "2.5.1"}.get(package_name),
     )
 
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
-        backend.load(signature)
+        backend.load(signature, dtype="float32")
 
-    message = str(exc_info.value)
-    assert "installed_transformers_version=5.5.0" in message
-    assert f"minimum_transformers_version={_MINIMUM_TRANSFORMERS_VERSION}" in message
-    assert "reinstall a standard Hugging Face transformers build" in message
+    _assert_runtime_contract_diagnostics(exc_info.value, installed_version="5.4.9")
+    assert (
+        f"minimum_transformers_pypi_release_date={_MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE}"
+        in str(exc_info.value)
+    )
 
 
 def test_gemma4_backend_load_normalizes_lazy_symbol_resolution_errors_at_supported_floor(
@@ -425,21 +468,22 @@ def test_gemma4_backend_load_normalizes_lazy_symbol_resolution_errors_at_support
     def fake_import_module(name: str) -> object:
         if name == "transformers":
             return LazyTransformersModule()
+        if name == "torch":
+            return SimpleNamespace()
         raise AssertionError(name)
 
     monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
     monkeypatch.setattr(
         Gemma4Backend,
         "_installed_version",
-        lambda self, package_name: {"transformers": "5.5.0", "torch": "2.5.1"}.get(package_name),
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
     )
 
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
         backend.load(signature)
 
     message = str(exc_info.value)
-    assert "installed_transformers_version=5.5.0" in message
-    assert f"minimum_transformers_version={_MINIMUM_TRANSFORMERS_VERSION}" in message
+    _assert_runtime_contract_diagnostics(exc_info.value, installed_version="5.5.4")
     assert "symbol_name=Gemma4ForConditionalGeneration" in message
     assert "symbol_resolution_error=FileNotFoundError: lazy Gemma4 module import failed" in message
     assert "reinstall a standard Hugging Face transformers build" in message
@@ -449,7 +493,7 @@ def test_gemma4_transformers_floor_matches_pyproject_dependency() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     dependencies = project["project"]["dependencies"]
 
-    assert f"transformers>={_MINIMUM_TRANSFORMERS_VERSION}; python_version >= '3.10'" in dependencies
+    assert f"transformers>={GEMMA4_MIN_TRANSFORMERS_VERSION}; python_version >= '3.10'" in dependencies
 
 
 def test_default_registry_resolves_gemma4_backend_from_mapping_and_signature() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
-from math import log
+from math import isfinite, log
 from pathlib import Path
 from types import TracebackType
 from typing import Callable, Iterable, Iterator, Literal, Mapping, MutableSequence, Protocol, Sequence, cast
@@ -658,9 +658,9 @@ class RouterActivationProfiler:
                 layer_index=layer.layer_index,
             )
         weight = float(value)
-        if weight < 0:
+        if not isfinite(weight):
             raise ShapeInvariantViolationError(
-                "captured router weight must be non-negative",
+                "captured router weight must be finite",
                 model_id=self._bundle.model_handle.model_id,
                 layer_index=layer.layer_index,
             )

@@ -1,16 +1,29 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
+from importlib import metadata as importlib_metadata
+import json
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
-from moe_surgeon.models.backend import LoadedBackendBundle
-from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from huggingface_hub import hf_hub_download
+
+from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
+from moe_surgeon.models.gemma4 import (
+    Gemma4Backend,
+    check_gemma4_runtime_support,
+)
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
+
+_LIVE_GEMMA4_MODEL_ID = "tiny-random/gemma-4-moe"
+_LIVE_GEMMA4_REVISION = "4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0"
 
 
 @dataclass
@@ -120,6 +133,114 @@ def _bundle() -> LoadedBackendBundle:
         model=SimpleNamespace(),
         config={},
     )
+
+
+def _require_live_gemma4_runtime() -> tuple[object, object]:
+    version = importlib_metadata.version("transformers")
+    try:
+        model_class, _ = check_gemma4_runtime_support(
+            model_id=_LIVE_GEMMA4_MODEL_ID,
+            source=_LIVE_GEMMA4_MODEL_ID,
+            installed_transformers_version=version,
+        )
+    except UnsupportedModelError as exc:
+        pytest.skip(str(exc))
+    transformers = importlib.import_module("transformers")
+    return transformers, model_class
+
+
+def _live_gemma4_signature() -> BackendSignature:
+    config_path = hf_hub_download(
+        repo_id=_LIVE_GEMMA4_MODEL_ID,
+        revision=_LIVE_GEMMA4_REVISION,
+        filename="config.json",
+    )
+    with open(config_path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    signature = BackendSignature.from_mapping(
+        config,
+        model_id=_LIVE_GEMMA4_MODEL_ID,
+        source_path=_LIVE_GEMMA4_MODEL_ID,
+    )
+    return BackendSignature(
+        model_id=signature.model_id,
+        architecture=signature.architecture,
+        model_type=signature.model_type,
+        revision=_LIVE_GEMMA4_REVISION,
+        source_path=signature.source_path,
+        config=signature.config,
+        metadata=signature.metadata,
+    )
+
+
+def _assert_live_router_contract(
+    records: tuple[object, ...],
+    *,
+    backend: Gemma4Backend,
+    bundle: LoadedBackendBundle,
+    topology: tuple[LayerTopology, ...],
+) -> None:
+    layer_indices = {layer.layer_index for layer in topology}
+    assert {cast(object, record).layer_index for record in records} == layer_indices
+
+    topology_by_index = {layer.layer_index: layer for layer in topology}
+    for record in records:
+        active_record = cast(object, record)
+        layer = topology_by_index[active_record.layer_index]
+        router_state = backend.extract_router_state(bundle, layer=layer)
+        assert tuple(int(dim) for dim in cast(object, active_record.top_k_indices).shape)[-1] == router_state.top_k
+        assert tuple(int(dim) for dim in cast(object, active_record.top_k_weights).shape)[-1] == router_state.top_k
+        assert active_record.router_scores is not None
+        assert tuple(int(dim) for dim in cast(object, active_record.router_scores).shape)[-1] == (
+            router_state.num_experts
+        )
+
+
+def test_live_gemma4_signature_preserves_pinned_revision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "architectures": ["Gemma4ForConditionalGeneration"],
+                "model_type": "gemma4",
+                "text_config": {
+                    "num_hidden_layers": 4,
+                    "hidden_size": 8,
+                    "enable_moe_block": True,
+                    "num_experts": 128,
+                    "top_k_experts": 8,
+                    "moe_intermediate_size": 32,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(sys.modules[__name__], "hf_hub_download", lambda **_: str(config_path))
+
+    signature = _live_gemma4_signature()
+
+    assert signature.revision == _LIVE_GEMMA4_REVISION
+    assert signature.source_path == _LIVE_GEMMA4_MODEL_ID
+
+
+def test_require_live_gemma4_runtime_skips_below_support_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(importlib_metadata, "version", lambda package_name: "5.4.9")
+    monkeypatch.setattr(
+        sys.modules[__name__],
+        "check_gemma4_runtime_support",
+        lambda **_: (_ for _ in ()).throw(
+            UnsupportedModelError(
+                "tiny-random/gemma-4-moe",
+                available_backends=("gemma4",),
+                details={"guidance": "shared runtime guidance"},
+            )
+        ),
+    )
+
+    with pytest.raises(pytest.skip.Exception, match="shared runtime guidance"):
+        _require_live_gemma4_runtime()
 
 
 def test_router_activation_profiler_collects_outputs_and_detaches_hooks() -> None:
@@ -236,6 +357,15 @@ def test_router_activation_profiler_accepts_sequence_output_without_optional_sco
     assert by_expert[1].token_count == 1
     assert by_expert[2].token_count == 1
     assert by_expert[3].token_count == 1
+
+
+def test_router_activation_profiler_coerces_negative_router_weights() -> None:
+    layer = _layer(0)
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: FakeRouterModule(name="layer-0")})
+    profiler = RouterActivationProfiler(backend=backend, bundle=_bundle(), topology=(layer,))
+
+    assert profiler._coerce_weight(-0.3, layer=layer) == pytest.approx(-0.3)
+    assert profiler._coerce_weight(0.2, layer=layer) == pytest.approx(0.2)
 
 
 def test_router_activation_profiler_rejects_missing_requested_router_scores() -> None:
@@ -485,3 +615,62 @@ def test_iter_prompt_batches_uses_attention_mask_for_active_token_counts() -> No
         "prompt_indices": [0, 1],
         "active_token_count": 3,
     }
+
+
+def test_router_activation_profiler_matches_live_gemma4_router_contract() -> None:
+    _require_live_gemma4_runtime()
+
+    torch = importlib.import_module("torch")
+    backend = Gemma4Backend()
+    signature = _live_gemma4_signature()
+    assert signature.revision == _LIVE_GEMMA4_REVISION
+    bundle = backend.load(signature, dtype="float32", seed=0)
+    tokenizer = bundle.tokenizer
+    assert tokenizer is not None
+
+    topology = backend.extract_topology(bundle)
+    layer_indices = {layer.layer_index for layer in topology}
+    assert layer_indices == {0, 1, 2, 3}
+
+    encoded_inputs = tokenizer("router coverage", return_tensors="pt")
+    attention_mask = encoded_inputs["attention_mask"]
+    model = cast(object, bundle.model)
+    getattr(model, "eval")()
+
+    with torch.no_grad():
+        with RouterActivationProfiler(
+            backend=backend,
+            bundle=bundle,
+            topology=topology,
+            include_router_scores=True,
+        ) as profiler:
+            getattr(model, "__call__")(
+                input_ids=encoded_inputs["input_ids"],
+                attention_mask=attention_mask,
+                use_cache=False,
+            )
+            forward_records = tuple(profiler.records)
+            _assert_live_router_contract(
+                forward_records,
+                backend=backend,
+                bundle=bundle,
+                topology=topology,
+            )
+
+            profiler.reset_aggregation()
+            profiler.clear_records()
+
+            generated = getattr(model, "generate")(
+                input_ids=encoded_inputs["input_ids"],
+                attention_mask=attention_mask,
+                max_new_tokens=1,
+                do_sample=False,
+            )
+            generation_records = tuple(profiler.records)
+            assert generated.shape[0] == encoded_inputs["input_ids"].shape[0]
+            _assert_live_router_contract(
+                generation_records,
+                backend=backend,
+                bundle=bundle,
+                topology=topology,
+            )

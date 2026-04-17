@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Preserved the pinned `tiny-random/gemma-4-moe` snapshot revision in the live Gemma4 profiler integration helper, strengthened generation-path assertions so live forward and generation captures both validate the full router output contract, updated Gemma4 router-scale validation to accept the hidden-size vector shape used by live Transformers Gemma4 routers, relaxed runtime aggregation to accept signed finite router weights emitted after learned per-expert scaling, centralized the backend-owned Gemma4 runtime contract so both offline and live checks share the same `transformers>=5.5.0` floor, support date, and remediation guidance, tightened the offline Gemma4 backend tests so both unsupported-runtime branches assert the same canonical diagnostics and guidance text, and rewired the live Gemma4 profiler gate to call that same shared backend contract instead of maintaining its own version/symbol skip logic.
 - Added offline-safe runtime profiling utilities in
   `src/moe_surgeon/runtime/profiler.py` and `src/moe_surgeon/runtime/bench.py`,
   including context-managed router hook attach/detach, backend-driven router
@@ -156,6 +157,10 @@
   preserving `python -m moe_surgeon` help-only execution.
 - Expanded CLI regression coverage for package metadata exposure, wrapper-based
   help rendering, and heavy dependency avoidance on the help path.
+
+## 2026-04-17
+- Added capability-gated live Gemma4 profiler coverage in `tests/test_runtime_profiler.py` using the pinned public MoE fixture `tiny-random/gemma-4-moe` to validate real router hook captures during both forward and generation paths once the local Transformers environment exposes Gemma4 support.
+- The live profiler test currently skips on environments such as `transformers 4.51.3` where `transformers.models.gemma4` and `Gemma4ForConditionalGeneration` are not yet installed, preserving the existing offline/unit test baseline while automatically activating after the dependency upgrade.
 
 ## 2026-04-17
 - Completed P5 static router metric hardening in `src/moe_surgeon/analysis/metrics.py` and `src/moe_surgeon/analysis/scan.py` by deriving deterministic softmax-based expert distributions, replacing unstable `topk` tie handling with stable sorting, and adding an aggregate scan summary over ordered MoE layers.
