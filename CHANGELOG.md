@@ -81,6 +81,11 @@
   covering lightweight imports, backend support matching, deterministic layer
   ordering, missing-key diagnostics, synthetic metadata capture, and the
   explicit unsupported-Transformers runtime guard for local `transformers 4.51.3`.
+## 2026-04-17
+- Added `src/moe_surgeon/prune/strategies.py` with a pure `PruneStrategy` protocol, immutable strategy metadata, registry/factory lookup, and built-in deterministic `frequency`, `router_mass`, and `combined` ranking strategies with explicit missing-input and coverage validation.
+- Added `src/moe_surgeon/prune/planner.py` with typed pruning constraints, deterministic global/per-layer budget allocation, stable plan IDs derived from canonical inputs, and traceable `PrunePlan` metadata/constraints output.
+- Exported the pruning strategy/planner surface from `src/moe_surgeon/prune/__init__.py`, added the canonical expert tie-break policy constant in `src/moe_surgeon/schemas.py`, and expanded regression coverage in `tests/test_prune_planner.py`.
+
 - Implemented explicit Gemma 4 MoE layer traversal in `src/moe_surgeon/models/gemma4.py`, including deterministic ordered MoE layer enumeration, config-vs-state tensor-key discovery, and fail-fast diagnostics for unexpected or incomplete MoE layer key sets.
 - Expanded `tests/test_models_gemma4.py` with offline regression coverage for ordered MoE key traversal, non-MoE layer rejection, and unexpected layer-prefix mismatch handling.
 ## 2026-04-17

@@ -39,8 +39,8 @@ Description: Add router hook instrumentation capturing `top_k_indices`, `top_k_w
 Acceptance criteria: only non-pad tokens contribute; output is reproducible with fixed seed and same prompt set; profiler results preserve the same layer ordering and expert indexing as `LayerTopology`.
 
 7. P7 — Implement pruning strategies and planner (Priority 7)
-Files: `src/moe_surgeon/prune/strategy.py`, `src/moe_surgeon/prune/planner.py`
-Description: Introduce strategy interface and implementations (`frequency`, `router_mass`, `combined`) and produce canonical `PrunePlan` with per-layer keep/drop sets under user constraints and minimum-expert rules.
+Files: `src/moe_surgeon/prune/strategies.py`, `src/moe_surgeon/prune/planner.py`
+Description: Introduce a pluggable strategy registry and implementations (`frequency`, `router_mass`, `combined`) and produce canonical `PrunePlan` with per-layer keep/drop sets under user constraints and minimum-expert rules.
 Acceptance criteria: same input always produces identical JSON output; invalid budgets and constraints fail fast with actionable validation messages; output plan includes traceability metadata (`source_run_id`, threshold parameters, computed budgets).
 
 8. P8 — Implement prune apply engine and remapping (Priority 8)
