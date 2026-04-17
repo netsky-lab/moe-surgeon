@@ -150,5 +150,13 @@
       "build-pruning-strategy-layer-and-deterministic-plan-generator"
     ],
     "timestamp": "2026-04-17T16:38:29.432Z"
+  },
+  {
+    "taskTitle": "Move live Gemma4 coverage behind explicit integration selection",
+    "summary": "**Changed**\n\nUpdated [pyproject.toml](/home/netsky/dev/labs/moe-surgeon/pyproject.toml), [tests/test_runtime_profiler.py](/home/netsky/dev/labs/moe-surgeon/tests/test_runtime_profiler.py), [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py), [README.md](/home/n",
+    "tags": [
+      "move-live-gemma4-coverage-behind-explicit-integration-selection"
+    ],
+    "timestamp": "2026-04-17T17:06:16.322Z"
   }
 ]
