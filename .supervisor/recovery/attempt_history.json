@@ -26,6 +26,18 @@
           ],
           "session": 2,
           "timestamp": "2026-04-17T07:10:15.598Z"
+        },
+        {
+          "approach": "[Build static router weight extractor]: Fixed all three listed issues.\n\n`src/moe_surgeon/analysis/metrics.py` no longer leaks generic `ValueError` for malformed scan inputs. The metric helpers now raise `ShapeInvariantViolationError`, `per_expert_scale` is validated as rank-1, norm outputs are check",
+          "success": false,
+          "error": "Authoritative machine checks still fail: `.supervisor/project.json:2-4` only defines `testCommand`, so `python -m moe_surgeon.repo_metrics --check lint` and `python -m moe_surgeon.repo_metrics --check",
+          "verifyConfidence": 96,
+          "issues": [
+            "Authoritative machine checks still fail: `.supervisor/project.json:2-4` only defines `testCommand`, so `python -m moe_surgeon.repo_metrics --check lint` and `python -m moe_surgeon.repo_metrics --check typecheck` both exit with `Requested check ... is not configured`. Add repo-metrics entries for the required `ruff` and `mypy` gates.",
+            "The evidence is contradictory: later execution summaries say the task is complete, but the current repo-metrics configuration still exposes only the `tests` check. The task should not be marked done until the repo-metrics gate matches the required quality checks and all configured machine checks pass."
+          ],
+          "session": 3,
+          "timestamp": "2026-04-17T09:17:37.880Z"
         }
       ],
       "stuckSince": null
@@ -51,6 +63,6 @@
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T07:10:15.598Z"
+    "lastUpdated": "2026-04-17T09:17:37.880Z"
   }
 }
