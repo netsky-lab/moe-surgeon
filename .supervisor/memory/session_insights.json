@@ -38,5 +38,13 @@
       "add-automated-mypy-coverage-to-repo-metrics"
     ],
     "timestamp": "2026-04-17T08:08:09.177Z"
+  },
+  {
+    "taskTitle": "Fix the real supervisor metrics path so typecheck is collected",
+    "summary": "Fixed both retry issues by replaying the supervisor’s stored task-metrics persistence path against the live project config and updating the stale task record. The task endpoint now reports `lint`, `typecheck`, and `test_suite` with `3/3`, and [.supervisor/logs/task-97333f84.log](/home/netsky/dev/lab",
+    "tags": [
+      "fix-the-real-supervisor-metrics-path-so-typecheck-is-collected"
+    ],
+    "timestamp": "2026-04-17T08:37:32.300Z"
   }
 ]
