@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from importlib import metadata as importlib_metadata
+from packaging.version import InvalidVersion, Version
 import re
 from typing import Any, Mapping, Sequence, cast
 
@@ -24,6 +25,8 @@ _BACKEND_VERSION = "1.0.0"
 _SUPPORTED_MODEL_TYPE = "gemma4"
 _SUPPORTED_ARCHITECTURE = "Gemma4ForConditionalGeneration"
 _SUPPORT_ADDED_DATE = "2026-04-01"
+GEMMA4_MIN_TRANSFORMERS_VERSION = "5.5.0"
+GEMMA4_SUPPORT_ADDED_ON = _SUPPORT_ADDED_DATE
 _DEFAULT_LAYER_PREFIX = "model.language_model.layers.{layer_index}"
 DEFAULT_REGISTRY_PRIORITY = 100
 _REQUIRED_LAYER_KEYS = {
@@ -41,6 +44,17 @@ _REQUIRED_LAYER_KEYS = {
     "post_feedforward_layernorm_1": "post_feedforward_layernorm_1.weight",
     "post_feedforward_layernorm_2": "post_feedforward_layernorm_2.weight",
 }
+
+
+def gemma4_runtime_guidance(installed_transformers_version: str | None) -> str:
+    """Return the canonical upgrade guidance for Gemma4 runtime support."""
+
+    installed_version = installed_transformers_version or "unknown"
+    return (
+        "Upgrade transformers to a release published on or after "
+        f"{GEMMA4_SUPPORT_ADDED_ON} with Gemma4 support "
+        f"(>={GEMMA4_MIN_TRANSFORMERS_VERSION}); installed version is {installed_version}"
+    )
 
 
 @dataclass(frozen=True)
@@ -104,28 +118,18 @@ class Gemma4Backend:
                     "backend_name": self.name,
                     "reason": "transformers import failed",
                     "source": source,
-                    "support_added_on": _SUPPORT_ADDED_DATE,
+                    "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+                    "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+                    "guidance": gemma4_runtime_guidance(transformers_version),
                 },
             ) from exc
 
-        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
-        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
-        if model_class is None or tokenizer_class is None:
-            raise UnsupportedModelError(
-                signature.model_id,
-                available_backends=(self.name,),
-                details={
-                    "backend_name": self.name,
-                    "installed_transformers_version": transformers_version or "unknown",
-                    "required_symbol": _SUPPORTED_ARCHITECTURE,
-                    "support_added_on": _SUPPORT_ADDED_DATE,
-                    "guidance": (
-                        "Upgrade transformers to a release published on or after "
-                        f"{_SUPPORT_ADDED_DATE} with Gemma4 support."
-                    ),
-                    "source": source,
-                },
-            )
+        model_class, tokenizer_class = self._resolve_runtime_components(
+            transformers_module,
+            model_id=signature.model_id,
+            source=source,
+            transformers_version=transformers_version,
+        )
 
         torch_module = import_module("torch")
         resolved_dtype = self._resolve_torch_dtype(torch_module, dtype)
@@ -645,6 +649,82 @@ class Gemma4Backend:
                 details={"backend_name": self.name, "invalid_dtype": dtype},
             )
         return cast(object, torch_dtype)
+
+    def _resolve_runtime_components(
+        self,
+        transformers_module: object,
+        *,
+        model_id: str,
+        source: str,
+        transformers_version: str | None,
+    ) -> tuple[Any, Any]:
+        self._validate_transformers_runtime(
+            model_id=model_id,
+            source=source,
+            transformers_version=transformers_version,
+            transformers_module=transformers_module,
+        )
+        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
+        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
+        return cast(Any, model_class), cast(Any, tokenizer_class)
+
+    def _validate_transformers_runtime(
+        self,
+        *,
+        model_id: str,
+        source: str,
+        transformers_version: str | None,
+        transformers_module: object,
+    ) -> None:
+        if not self._meets_minimum_transformers_version(transformers_version):
+            raise UnsupportedModelError(
+                model_id,
+                available_backends=(self.name,),
+                details=self._runtime_support_details(
+                    source=source,
+                    transformers_version=transformers_version,
+                    required_symbol=_SUPPORTED_ARCHITECTURE,
+                ),
+            )
+
+        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
+        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
+        if model_class is None or tokenizer_class is None:
+            required_symbol = _SUPPORTED_ARCHITECTURE if model_class is None else "AutoTokenizer"
+            raise UnsupportedModelError(
+                model_id,
+                available_backends=(self.name,),
+                details=self._runtime_support_details(
+                    source=source,
+                    transformers_version=transformers_version,
+                    required_symbol=required_symbol,
+                ),
+            )
+
+    def _runtime_support_details(
+        self,
+        *,
+        source: str,
+        transformers_version: str | None,
+        required_symbol: str,
+    ) -> Mapping[str, object]:
+        return {
+            "backend_name": self.name,
+            "installed_transformers_version": transformers_version or "unknown",
+            "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+            "required_symbol": required_symbol,
+            "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+            "guidance": gemma4_runtime_guidance(transformers_version),
+            "source": source,
+        }
+
+    def _meets_minimum_transformers_version(self, installed_version: str | None) -> bool:
+        if installed_version is None:
+            return False
+        try:
+            return Version(installed_version) >= Version(GEMMA4_MIN_TRANSFORMERS_VERSION)
+        except InvalidVersion:
+            return False
 
     def _state_index(self, bundle: LoadedBackendBundle) -> Mapping[str, object]:
         metadata_state = bundle.metadata.get("state_dict")

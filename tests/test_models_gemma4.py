@@ -341,20 +341,22 @@ def test_gemma4_backend_load_populates_model_handle_metadata_with_monkeypatched_
     monkeypatch.setattr(
         Gemma4Backend,
         "_installed_version",
-        lambda self, package_name: {"transformers": "4.60.0", "torch": "2.5.1"}.get(package_name),
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
     )
 
     bundle = backend.load(signature, dtype="bfloat16", seed=7)
 
     assert bundle.model_handle.revision == "rev-123"
-    assert bundle.model_handle.framework_version == "4.60.0"
+    assert bundle.model_handle.framework_version == "5.5.4"
     assert bundle.model_handle.dtype == "torch.bfloat16"
     assert bundle.model_handle.metadata["backend_version"] == backend.backend_version
     assert bundle.model_handle.metadata["torch_dtype"] == "torch.bfloat16"
     assert bundle.metadata["backend_version"] == backend.backend_version
 
 
-def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing() -> None:
+def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     backend = Gemma4Backend()
     signature = BackendSignature.from_mapping(_gemma4_config())
 
@@ -365,17 +367,62 @@ def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_mis
             return SimpleNamespace()
         raise AssertionError(name)
 
-    monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
+    monkeypatch.setattr(
+        Gemma4Backend,
+        "_installed_version",
+        lambda self, package_name: {"transformers": "5.5.4", "torch": "2.5.1"}.get(package_name),
+    )
 
     with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
-        try:
-            backend.load(signature)
-        finally:
-            monkeypatch.undo()
+        backend.load(signature)
 
     message = str(exc_info.value)
-    assert "installed_transformers_version=" in message
+    assert "installed_transformers_version=5.5.4" in message
+    assert "minimum_transformers_version=5.5.0" in message
+    assert "required_symbol=Gemma4ForConditionalGeneration" in message
+    assert "support_added_on=2026-04-01" in message
+
+
+def test_gemma4_backend_load_rejects_transformers_below_minimum_support_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Gemma4Backend()
+    signature = BackendSignature.from_mapping(_gemma4_config())
+
+    class FakeModelClass:
+        @classmethod
+        def from_pretrained(cls, source: str, revision: str | None = None, torch_dtype: object | None = None) -> object:
+            raise AssertionError("version floor should reject before model loading")
+
+    class FakeTokenizerClass:
+        @classmethod
+        def from_pretrained(cls, source: str, revision: str | None = None) -> object:
+            raise AssertionError("version floor should reject before tokenizer loading")
+
+    def fake_import_module(name: str) -> object:
+        if name == "transformers":
+            return SimpleNamespace(
+                Gemma4ForConditionalGeneration=FakeModelClass,
+                AutoTokenizer=FakeTokenizerClass,
+            )
+        if name == "torch":
+            return SimpleNamespace(float32="fake-float32")
+        raise AssertionError(name)
+
+    monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
+    monkeypatch.setattr(
+        Gemma4Backend,
+        "_installed_version",
+        lambda self, package_name: {"transformers": "5.4.9", "torch": "2.5.1"}.get(package_name),
+    )
+
+    with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
+        backend.load(signature, dtype="float32")
+
+    message = str(exc_info.value)
+    assert "installed_transformers_version=5.4.9" in message
+    assert "minimum_transformers_version=5.5.0" in message
     assert "required_symbol=Gemma4ForConditionalGeneration" in message
     assert "support_added_on=2026-04-01" in message
 

@@ -16,14 +16,16 @@ from huggingface_hub import hf_hub_download
 
 from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
-from moe_surgeon.models.gemma4 import Gemma4Backend
+from moe_surgeon.models.gemma4 import (
+    GEMMA4_MIN_TRANSFORMERS_VERSION,
+    Gemma4Backend,
+    gemma4_runtime_guidance,
+)
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
 
 _LIVE_GEMMA4_MODEL_ID = "tiny-random/gemma-4-moe"
 _LIVE_GEMMA4_REVISION = "4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0"
-_LIVE_GEMMA4_MIN_TRANSFORMERS_VERSION = "5.5.0"
-_LIVE_GEMMA4_SUPPORT_ADDED_ON = "2026-04-01"
 
 
 @dataclass
@@ -137,27 +139,19 @@ def _bundle() -> LoadedBackendBundle:
 
 def _require_live_gemma4_runtime() -> tuple[object, object]:
     version = importlib_metadata.version("transformers")
-    if Version(version) < Version(_LIVE_GEMMA4_MIN_TRANSFORMERS_VERSION):
-        pytest.skip(_live_gemma4_upgrade_guidance(version))
+    if Version(version) < Version(GEMMA4_MIN_TRANSFORMERS_VERSION):
+        pytest.skip(gemma4_runtime_guidance(version))
 
     try:
         transformers = importlib.import_module("transformers")
         importlib.import_module("transformers.models.gemma4")
     except Exception:
-        pytest.skip(_live_gemma4_upgrade_guidance(version))
+        pytest.skip(gemma4_runtime_guidance(version))
 
     model_class = getattr(transformers, "Gemma4ForConditionalGeneration", None)
     if model_class is None:
-        pytest.skip(_live_gemma4_upgrade_guidance(version))
+        pytest.skip(gemma4_runtime_guidance(version))
     return transformers, model_class
-
-
-def _live_gemma4_upgrade_guidance(installed_version: str) -> str:
-    return (
-        "Upgrade transformers to a release published on or after "
-        f"{_LIVE_GEMMA4_SUPPORT_ADDED_ON} with Gemma4 support "
-        f"(>={_LIVE_GEMMA4_MIN_TRANSFORMERS_VERSION}); installed version is {installed_version}"
-    )
 
 
 def _live_gemma4_signature() -> BackendSignature:
