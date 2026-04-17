@@ -1,7 +1,43 @@
 {
-  "tasks": {},
+  "tasks": {
+    "3df991c5-0178-48fe-8d87-eb2c48233549": {
+      "attempts": [
+        {
+          "approach": "[Build static router weight extractor]: **Execution Summary**\n\nSubtask status:\n1. Done\n2. Done\n3. Not done in this task. PM feedback explicitly scoped CLI/output-writer work out of P5, so I stopped at static scan + metrics.\n\nWhat changed:\n- [src/moe_surgeon/analysis/metrics.py](/home/netsky/dev/labs",
+          "success": false,
+          "error": "`tests/test_analysis_scan.py:152-222` covers the happy path, determinism, and topology-only metadata, but it never exercises the `_require_tensor()` error branches in `src/moe_surgeon/analysis/scan.py",
+          "verifyConfidence": 89,
+          "issues": [
+            "`tests/test_analysis_scan.py:152-222` covers the happy path, determinism, and topology-only metadata, but it never exercises the `_require_tensor()` error branches in `src/moe_surgeon/analysis/scan.py:100-132` for a materialized `state_dict` with a missing required router tensor or a non-`torch.Tensor` payload. The PM explicitly required missing numeric tensor payload coverage, so that criterion is not met.",
+            "`tests/test_analysis_scan.py` also lacks a regression that drives `scan_model()` through router-tensor shape failures enforced by `Gemma4Backend.extract_router_state()` / `validate_layer()` in `src/moe_surgeon/models/gemma4.py:262-289` and `:373-396`. Existing shape-mismatch tests in `tests/test_models_gemma4.py` only cover expert tensors, not the scan analyzer path or the router tensors it consumes, so the PM's shape-mismatch coverage requirement is still unmet."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T06:18:49.939Z"
+        }
+      ],
+      "stuckSince": null
+    },
+    "350a6c03-4ae3-42f6-8de0-0c2aae9e845b": {
+      "attempts": [
+        {
+          "approach": "[Create profiler instrumentation utility]: **Execution Summary**\n\n[1] Done. Added the runtime profiler core in [src/moe_surgeon/runtime/profiler.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/runtime/profiler.py) plus the compatibility import in [src/moe_surgeon/runtime/bench.py](/home/netsky",
+          "success": false,
+          "error": "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_pr",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/runtime/profiler.py:418-427` hard-codes sequence router outputs as `(top_k_indices, top_k_weights, router_scores)`, but current official Hugging Face Gemma4 router returns `(router_probabilities, top_k_weights, top_k_index)` and the decoder consumes `_, top_k_weights, top_k_index = self.router(...)`. Because `src/moe_surgeon/models/gemma4.py:402-412` hooks `layer.router`, real Gemma4 runs will fail with `top_k_indices last dimension mismatch` instead of collecting activations, so the task’s core runtime-capture acceptance is not met.",
+            "`src/moe_surgeon/runtime/profiler.py:421,429-430,488,494,546,652` raises `ShapeInvariantViolationError` without the required model/layer diagnostic context on several malformed-output branches. The PM criteria asked for detailed diagnostics; today a bad tuple shape reproduces as only `router forward output sequence must contain 2 or 3 items` with no `model_id` or `layer_index`.",
+            "`tests/test_runtime_profiler.py` only exercises synthetic dict/object outputs and basic padding aggregation. It does not cover the actual Gemma4 router tuple contract, malformed container branches, missing optional score capture, or out-of-range expert indices, so the new runtime path is not adequately verified against the backend it is supposed to support."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T06:58:04.996Z"
+        }
+      ],
+      "stuckSince": null
+    }
+  },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T05:50:25.454Z"
+    "lastUpdated": "2026-04-17T06:58:04.996Z"
   }
 }
