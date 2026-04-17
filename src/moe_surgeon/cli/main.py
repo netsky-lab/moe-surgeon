@@ -26,10 +26,28 @@ def scan() -> None:
 
 
 @cli.command()
-def bench() -> None:
+@click.option("--prompt", "prompts", multiple=True, help="Prompt text to profile. Repeat for batches.")
+@click.option("--prompt-file", type=click.Path(exists=True, dir_okay=False, path_type=str))
+@click.option("--batch-size", type=click.IntRange(min=1), default=1, show_default=True)
+@click.option("--seed", type=click.IntRange(min=0), default=0, show_default=True)
+@click.option("--capture-router-scores/--no-capture-router-scores", default=False, show_default=True)
+def bench(
+    prompts: tuple[str, ...],
+    prompt_file: str | None,
+    batch_size: int,
+    seed: int,
+    capture_router_scores: bool,
+) -> None:
     """Profile runtime expert activation without mutating checkpoints."""
 
-    click.echo("bench is not implemented yet")
+    prompt_count = len(prompts)
+    if prompt_file is not None:
+        prompt_count += 1
+    click.echo(
+        "bench is not implemented yet "
+        f"(prompt_inputs={prompt_count}, batch_size={batch_size}, seed={seed}, "
+        f"capture_router_scores={str(capture_router_scores).lower()})"
+    )
 
 
 @cli.command()

@@ -24,11 +24,11 @@ moe_surgeon/
     - gemma4.py
   - analysis/
     - __init__.py
-    - scan.py (future)
+    - scan.py
     - metrics.py (future)
   - runtime/
     - __init__.py
-    - profiler.py (future)
+    - profiler.py
   - prune/
     - __init__.py
     - strategy.py
@@ -73,6 +73,9 @@ Mutations are performed in a later apply layer after planning.
 
 1. scan: discover topology and static routing scores.
 2. bench: capture live routing into ActivationStats.
+   Runtime profiling is backend-driven and offline-safe: hooks attach only to
+   backend-resolved router modules, aggregation is mask-aware, and cleanup runs
+   in `finally`/context-manager exit paths.
 3. prune: merge signals and create PrunePlan.
 4. apply: remap tensors and validate invariants.
 5. export: write deterministic outputs and manifests.

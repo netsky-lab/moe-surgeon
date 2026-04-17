@@ -399,6 +399,18 @@ class Gemma4Backend:
             )
         self.extract_expert_state(bundle, layer=layer)
 
+    def resolve_router_module(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> object:
+        """Resolve the live router module for one Gemma 4 MoE layer."""
+
+        self.validate_layer(bundle, layer=layer)
+        router_path = self.resolve_router_module_path(bundle, layer=layer)
+        return self._resolve_object_path(bundle.model, router_path, bundle=bundle, layer=layer)
+
     def _parse_bundle_topology(self, bundle: LoadedBackendBundle) -> Gemma4TopologyConfig:
         return self._parse_topology_mapping(
             model_id=bundle.model_handle.model_id,
@@ -648,9 +660,83 @@ class Gemma4Backend:
             model_id=bundle.model_handle.model_id,
         )
 
+    def resolve_router_module_path(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> str:
+        """Resolve the canonical router module path for one validated layer."""
+
+        tensor_keys = layer.module_paths or self.resolve_layer_tensor_keys(bundle, layer_index=layer.layer_index)
+        router_proj_key = tensor_keys.get("router_proj")
+        if router_proj_key is None:
+            raise TopologyMismatchError(
+                "Gemma4 layer topology missing router_proj module path",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+            )
+        suffix = ".proj.weight"
+        if not router_proj_key.endswith(suffix):
+            raise TopologyMismatchError(
+                "Gemma4 router projection key must end with .proj.weight",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                tensor_key=router_proj_key,
+            )
+        return router_proj_key[: -len(suffix)]
+
     def _layer_prefix(self, bundle: LoadedBackendBundle, *, layer_index: int) -> str:
         template = self._layer_prefix_template(bundle)
         return template.format(layer_index=layer_index)
+
+    def _resolve_object_path(
+        self,
+        root: object,
+        path: str,
+        *,
+        bundle: LoadedBackendBundle,
+        layer: LayerTopology,
+    ) -> object:
+        current = root
+        traversed: list[str] = []
+        for segment in path.split("."):
+            traversed.append(segment)
+            if isinstance(current, Mapping):
+                if segment in current:
+                    current = current[segment]
+                    continue
+                raise TopologyMismatchError(
+                    "Gemma4 router module path could not be resolved",
+                    model_id=bundle.model_handle.model_id,
+                    layer_index=layer.layer_index,
+                    details={"module_path": path, "missing_segment": segment},
+                )
+            if segment.isdigit():
+                index = int(segment)
+                try:
+                    current = cast(Any, current)[index]
+                except Exception as exc:
+                    raise TopologyMismatchError(
+                        "Gemma4 router module path could not be resolved",
+                        model_id=bundle.model_handle.model_id,
+                        layer_index=layer.layer_index,
+                        details={"module_path": path, "missing_segment": segment},
+                    ) from exc
+                continue
+            if hasattr(current, segment):
+                current = getattr(current, segment)
+                continue
+            try:
+                current = cast(Any, current)[segment]
+            except Exception as exc:
+                raise TopologyMismatchError(
+                    "Gemma4 router module path could not be resolved",
+                    model_id=bundle.model_handle.model_id,
+                    layer_index=layer.layer_index,
+                    details={"module_path": path, "missing_segment": segment},
+                ) from exc
+        return current
 
     def _layer_prefix_template(self, bundle: LoadedBackendBundle) -> str:
         template = bundle.metadata.get("layer_prefix_template", _DEFAULT_LAYER_PREFIX)

@@ -156,6 +156,14 @@ class ModelBackend(Protocol):
     ) -> None:
         """Validate layer-level topology and routing invariants."""
 
+    def resolve_router_module(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> object:
+        """Resolve the live router module object for one validated layer."""
+
 
 @lru_cache(maxsize=1)
 def build_backend_registry() -> "BackendRegistry":

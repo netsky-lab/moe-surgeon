@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Added offline-safe runtime profiling utilities in
+  `src/moe_surgeon/runtime/profiler.py` and `src/moe_surgeon/runtime/bench.py`,
+  including context-managed router hook attach/detach, backend-driven router
+  module resolution, mask-aware activation aggregation, and deterministic bench
+  artifact manifest generation keyed by prompt/config digests instead of
+  timestamps.
+- Exported runtime profiler entrypoints from `src/moe_surgeon/runtime/__init__.py`
+  and added activation/topology ordering helpers in
+  `src/moe_surgeon/analysis/scan.py`.
+- Extended the lightweight CLI `bench` placeholder with prompt batching and
+  profiler-option parsing in `src/moe_surgeon/cli/main.py`.
+- Added offline regression coverage in `tests/test_runtime_profiler.py`,
+  `tests/test_analysis_scan.py`, `tests/test_models_gemma4.py`, `tests/test_cli.py`,
+  and `tests/test_schemas.py` for hook cleanup, aggregation semantics, topology
+  alignment, deterministic manifest generation, and bench CLI option handling.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented
