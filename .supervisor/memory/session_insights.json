@@ -110,5 +110,13 @@
       "stabilize-repo-test-execution-against-ambient-pytest-plugins-and-tempdir-failures"
     ],
     "timestamp": "2026-04-17T14:06:06.648Z"
+  },
+  {
+    "taskTitle": "Add live Gemma4 integration coverage",
+    "summary": "[Enforce the Gemma4 runtime contract inside the backend]: Fixed the two verifier issues and committed them as `118b2e8` (`fix: address verify issues - gemma4 runtime floor`).\n\n1. `Gemma4Backend.load()` now enforces the backend-owned runtime contract before any tokenizer/model loading. In [src/moe_su",
+    "tags": [
+      "add-live-gemma4-integration-coverage"
+    ],
+    "timestamp": "2026-04-17T14:53:28.761Z"
   }
 ]
