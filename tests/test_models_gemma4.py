@@ -405,7 +405,6 @@ def test_gemma4_backend_load_populates_model_handle_metadata_with_monkeypatched_
     assert bundle.model_handle.metadata["backend_version"] == backend.backend_version
     assert bundle.model_handle.metadata["torch_dtype"] == "torch.bfloat16"
     assert bundle.metadata["backend_version"] == backend.backend_version
-
 def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -31,7 +31,7 @@ moe_surgeon/
     - profiler.py
   - prune/
     - __init__.py
-    - strategy.py
+    - strategies.py
     - planner.py
     - apply.py (future)
   - export/
@@ -64,8 +64,11 @@ Transformers capability checks before attempting model construction.
 
 Pruning uses a pure strategy layer first, followed by a planner:
 
-- prune/strategy.py: each strategy emits PruneCandidate lists.
+- prune/strategies.py: registry-backed strategies emit PruneCandidate lists.
 - prune/planner.py: applies constraints and budgets to emit PrunePlan.
+- Planner traceability is deterministic: canonicalized constraints, resolved
+  budget bounds, source run identity, and candidate digests are embedded in the
+  plan payload so repeated identical inputs produce byte-stable JSON.
 
 Mutations are performed in a later apply layer after planning.
 

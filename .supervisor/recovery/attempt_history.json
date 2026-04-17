@@ -95,6 +95,23 @@
       ],
       "stuckSince": null
     },
+    "a67057c7-3bed-4461-bdd2-a9d6d3f0b5e8": {
+      "attempts": [
+        {
+          "approach": "**Changed**\n- [tests/test_runtime_profiler.py](/home/netsky/dev/labs/moe-surgeon/tests/test_runtime_profiler.py) now includes a capability-gated live integration test that pins `tiny-random/gemma-4-moe@4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, loads the real model through `Gemma4Backend`, runs one ",
+          "success": false,
+          "error": "`tests/test_runtime_profiler.py:155-167` does not preserve the declared fixture pin. `_live_gemma4_signature()` downloads `config.json` at revision `4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, but `Bac",
+          "verifyConfidence": 97,
+          "issues": [
+            "`tests/test_runtime_profiler.py:155-167` does not preserve the declared fixture pin. `_live_gemma4_signature()` downloads `config.json` at revision `4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0`, but `BackendSignature.from_mapping()` drops that revision because the downloaded config lacks `_commit_hash`/`revision`. `Gemma4Backend.load()` then calls `from_pretrained(..., revision=signature.revision)` with `None` at `src/moe_surgeon/models/gemma4.py:132-136`, so the live test can silently load repo HEAD instead of the pinned snapshot. Build the signature with `revision=_LIVE_GEMMA4_REVISION` explicitly, or otherwise guarantee the exact revision is carried into `backend.load()`.",
+            "`tests/test_runtime_profiler.py:588-599` under-tests the generation path. After `generate()`, the test only checks batch size, a minimum record count, and that some aggregated token count is positive. It does not assert the router output contract for generation records: complete layer coverage, `top_k_indices`/`top_k_weights` last-dimension checks against `router_state.top_k`, `router_scores` presence, and `router_scores` last-dimension checks against `router_state.num_experts`. Strengthen the generation assertions to match the forward-path contract so the end-to-end live profiler test actually fails on malformed or partial generation captures."
+          ],
+          "session": 1,
+          "timestamp": "2026-04-17T12:19:01.761Z"
+        }
+      ],
+      "stuckSince": null
+    },
     "a5e9e56c-d005-458d-95e3-c9f27c551a4d": {
       "attempts": [
         {

@@ -42,6 +42,9 @@ from moe_surgeon.models.errors import (
 CANONICAL_SCHEMA_VERSION = "1.0.0"
 CANONICAL_DEFAULT_TIMESTAMP = "1970-01-01T00:00:00+00:00"
 CANONICAL_FLOAT_EPSILON = 1e-12
+CANONICAL_EXPERT_TIE_BREAK_POLICY = (
+    "score_desc,secondary_desc,layer_index_asc,expert_index_asc,input_position_asc"
+)
 _LAYER_REF_PATTERNS = (re.compile(r"^layer_(\d+)$"), re.compile(r"^module_(\d+)$"))
 
 
@@ -1130,6 +1133,7 @@ def from_json_file(path: str | Path) -> Any:
 __all__ = [
     "CANONICAL_SCHEMA_VERSION",
     "CANONICAL_FLOAT_EPSILON",
+    "CANONICAL_EXPERT_TIE_BREAK_POLICY",
     "SchemaType",
     "validate_shape_tuple",
     "validate_layer_ref",
