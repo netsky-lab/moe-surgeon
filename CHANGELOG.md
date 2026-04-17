@@ -159,6 +159,9 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Locked the live Gemma4 runtime skip regression in `tests/test_runtime_profiler.py` to the shared backend runtime contract, asserting `installed_transformers_version`, `minimum_transformers_version`, `required_symbol`, `support_added_on`, `source`, and canonical `guidance` text instead of a placeholder skip fragment.
+
+## 2026-04-17
 - Added capability-gated live Gemma4 profiler coverage in `tests/test_runtime_profiler.py` using the pinned public MoE fixture `tiny-random/gemma-4-moe` to validate real router hook captures during both forward and generation paths once the local Transformers environment exposes Gemma4 support.
 - The live profiler test currently skips on environments such as `transformers 4.51.3` where `transformers.models.gemma4` and `Gemma4ForConditionalGeneration` are not yet installed, preserving the existing offline/unit test baseline while automatically activating after the dependency upgrade.
 

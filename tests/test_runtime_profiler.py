@@ -16,8 +16,11 @@ from huggingface_hub import hf_hub_download
 from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
 from moe_surgeon.models.gemma4 import (
+    GEMMA4_MIN_TRANSFORMERS_VERSION,
+    GEMMA4_SUPPORT_ADDED_ON,
     Gemma4Backend,
     check_gemma4_runtime_support,
+    gemma4_runtime_guidance,
 )
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
@@ -226,7 +229,8 @@ def test_live_gemma4_signature_preserves_pinned_revision(tmp_path: Path, monkeyp
 def test_require_live_gemma4_runtime_skips_below_support_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(importlib_metadata, "version", lambda package_name: "5.4.9")
+    installed_version = "5.4.9"
+    monkeypatch.setattr(importlib_metadata, "version", lambda package_name: installed_version)
     monkeypatch.setattr(
         sys.modules[__name__],
         "check_gemma4_runtime_support",
@@ -234,13 +238,28 @@ def test_require_live_gemma4_runtime_skips_below_support_floor(
             UnsupportedModelError(
                 "tiny-random/gemma-4-moe",
                 available_backends=("gemma4",),
-                details={"guidance": "shared runtime guidance"},
+                details={
+                    "installed_transformers_version": installed_version,
+                    "minimum_transformers_version": GEMMA4_MIN_TRANSFORMERS_VERSION,
+                    "required_symbol": "Gemma4ForConditionalGeneration",
+                    "support_added_on": GEMMA4_SUPPORT_ADDED_ON,
+                    "source": _LIVE_GEMMA4_MODEL_ID,
+                    "guidance": gemma4_runtime_guidance(installed_version),
+                },
             )
         ),
     )
 
-    with pytest.raises(pytest.skip.Exception, match="shared runtime guidance"):
+    with pytest.raises(pytest.skip.Exception) as exc_info:
         _require_live_gemma4_runtime()
+
+    message = str(exc_info.value)
+    assert f"installed_transformers_version={installed_version}" in message
+    assert f"minimum_transformers_version={GEMMA4_MIN_TRANSFORMERS_VERSION}" in message
+    assert "required_symbol=Gemma4ForConditionalGeneration" in message
+    assert f"support_added_on={GEMMA4_SUPPORT_ADDED_ON}" in message
+    assert f"source={_LIVE_GEMMA4_MODEL_ID}" in message
+    assert f"guidance={gemma4_runtime_guidance(installed_version)}" in message
 
 
 def test_router_activation_profiler_collects_outputs_and_detaches_hooks() -> None:
