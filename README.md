@@ -84,3 +84,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Validate expert index mapping before and after prune operations.
 - Deterministic sorting and stable serialization for all manifests.
 - Strict shape diagnostics before write-back.
+
+## CLI bootstrap
+
+- Install in editable mode with `python -m pip install -e .`.
+- Run help with `python -m moe_surgeon --help` or the installed `moe-surgeon --help` script.
+- The bootstrap CLI exposes placeholder `scan`, `bench`, `prune`, and `export` commands without importing model/runtime backends during help parsing.

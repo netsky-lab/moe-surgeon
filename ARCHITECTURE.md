@@ -11,10 +11,11 @@
 
 moe_surgeon/
   - __init__.py
+  - __main__.py
   - schemas.py
   - cli/
     - __init__.py
-    - main.py (future)
+    - main.py
   - models/
     - __init__.py
     - backend.py
@@ -79,3 +80,4 @@ Analysis and runtime modules never mutate weights.
 3. Immutable transforms: pruning creates derived artifacts, never edits source files.
 4. Canonical ordering: explicit tie-breakers for all ranking operations.
 5. Runtime plus static fusion: combine static and live routing signals.
+6. Lightweight bootstrap: package import and help output must not import heavy model/runtime dependencies.
