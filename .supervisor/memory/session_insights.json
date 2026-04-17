@@ -54,5 +54,13 @@
       "fix-the-real-supervisor-metrics-path-so-typecheck-is-collected"
     ],
     "timestamp": "2026-04-17T08:38:20.715Z"
+  },
+  {
+    "taskTitle": "Replace the synthetic collector regression with a repo-config integration test",
+    "summary": "**Changed**\n\nUpdated [tests/test_repo_metrics.py](/home/netsky/dev/labs/moe-surgeon/tests/test_repo_metrics.py) to replace the installed-supervisor regression that injected an inline `verifyConfig`. The new test calls the live supervisor collector’s `resolveVerifyConfig()` against this repo root and",
+    "tags": [
+      "replace-the-synthetic-collector-regression-with-a-repo-config-integration-test"
+    ],
+    "timestamp": "2026-04-17T08:50:41.135Z"
   }
 ]
