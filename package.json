@@ -7,6 +7,6 @@
     "test": "python -m pytest",
     "lint": "python -m ruff check src tests",
     "typecheck": "python -m mypy src",
-    "metrics": "npm run lint && npm run typecheck && npm test"
+    "metrics": "python -m moe_surgeon.repo_metrics"
   }
 }

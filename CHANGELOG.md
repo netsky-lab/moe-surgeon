@@ -2,14 +2,15 @@
 
 ## Unreleased
 
-- Added `.supervisor/project.json` so the supervisor metric collector now runs
-  `npm run lint`, `npm run typecheck`, and `npm test`, bringing automated repo
-  metrics in line with the `AGENTS.md` type-check gate.
-- Kept the root `typecheck` and aggregate `metrics` scripts in `package.json`,
-  then strengthened `tests/test_repo_metrics.py` to validate the real
-  supervisor verify config and execute the configured `typecheck` command.
-- Updated `README.md` to document the supervisor-enforced quality commands
-  rather than claiming coverage from package scripts alone.
+- Added `src/moe_surgeon/repo_metrics.py`, a lightweight repo-owned metrics
+  collector that reads `.supervisor/project.json`, runs the configured checks
+  as named `lint`, `typecheck`, and `tests` metrics, and writes a canonical
+  JSON artifact instead of depending on stale supervisor logs alone.
+- Updated `package.json` so `npm run metrics` uses the repo-owned collector, and
+  expanded `tests/test_repo_metrics.py` to verify the emitted metrics artifact
+  and refreshed task-log summary lines.
+- Updated `README.md` to describe the repo-owned metrics collector and its
+  machine-readable output.
 - Implemented the Gemma 4 backend adapter in `src/moe_surgeon/models/gemma4.py`
   with strict config validation, deterministic MoE layer discovery, required
   tensor-key checks, and router/expert tensor diagnostics for the documented

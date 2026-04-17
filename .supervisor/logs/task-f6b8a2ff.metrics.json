@@ -1,0 +1,39 @@
+{
+  "checks": [
+    {
+      "category": "code_quality",
+      "command": "npm run lint",
+      "duration_ms": 101,
+      "exit_code": 0,
+      "name": "lint",
+      "output": "> moe-surgeon@0.1.0 lint\n> python -m ruff check src tests\n\nAll checks passed!",
+      "passed": true
+    },
+    {
+      "category": "code_quality",
+      "command": "npm run typecheck",
+      "duration_ms": 306,
+      "exit_code": 0,
+      "name": "typecheck",
+      "output": "> moe-surgeon@0.1.0 typecheck\n> python -m mypy src\n\nSuccess: no issues found in 15 source files",
+      "passed": true
+    },
+    {
+      "category": "tests",
+      "command": "npm test",
+      "duration_ms": 4286,
+      "exit_code": 0,
+      "name": "tests",
+      "output": "> moe-surgeon@0.1.0 test\n> python -m pytest\n\n============================= test session starts ==============================\nplatform linux -- Python 3.11.7, pytest-8.4.2, pluggy-1.6.0\nbenchmark: 5.1.0 (defaults: timer=time.perf_counter disable_gc=False min_rounds=5 min_time=0.000005 max_time=1.0 calibration_precision=10 warmup=False warmup_iterations=100000)\nrootdir: /home/netsky/dev/labs/moe-surgeon\nconfigfile: pyproject.toml\nplugins: cov-6.2.1, asyncio-1.1.0, xdist-3.8.0, mock-3.14.1, benchmark-5.1.0, typeguard-2.13.3, torchtyping-0.1.5, anyio-4.11.0, langsmith-0.4.30, django-4.11.1, Faker-37.12.0\nasyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function\ncollected 65 items\n\ntests/test_cli.py ......                                                 [  9%]\ntests/test_models_gemma4.py ................                             [ 33%]\ntests/test_models_registry.py ................                           [ 58%]\ntests/test_repo_metrics.py ...                                           [ 63%]\ntests/test_schemas.py ........................                           [100%]\n\n============================== 65 passed in 1.92s ==============================",
+      "passed": true
+    }
+  ],
+  "collected_at": "2026-04-17T07:38:38.294142Z",
+  "root_path": "/home/netsky/dev/labs/moe-surgeon",
+  "summary": {
+    "failed": 0,
+    "passed": 3,
+    "total": 3
+  },
+  "task_id": "f6b8a2ff-8830-480d-8a41-4c2e562255b4"
+}
