@@ -94,5 +94,13 @@
       "implement-runtime-benchmark-profiler-with-router-activation-hooks"
     ],
     "timestamp": "2026-04-17T10:22:23.155Z"
+  },
+  {
+    "taskTitle": "Enforce a truthful Transformers support floor for Gemma4",
+    "summary": "Fixed both verifier issues in commit `4c9ba5b` (`fix: address verify issues - normalize lazy gemma4 symbol errors`).\n\n1. `src/moe_surgeon/models/gemma4.py`\n- Moved supported-floor symbol resolution onto the same guarded path as the version check.\n- `_validate_transformers_runtime_support(...)` now r",
+    "tags": [
+      "enforce-a-truthful-transformers-support-floor-for-gemma4"
+    ],
+    "timestamp": "2026-04-17T13:35:42.368Z"
   }
 ]

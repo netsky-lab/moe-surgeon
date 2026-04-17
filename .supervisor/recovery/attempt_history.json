@@ -16,6 +16,18 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T10:52:04.282Z"
+        },
+        {
+          "approach": "Fixed all five requested planner/test issues in commit `06b652c` (`fix: harden prune planner constraint validation`).\n\n`src/moe_surgeon/prune/planner.py` now rejects non-integer constraint counts up front, rejects non-integer/invalid `layer_overrides` keys and non-`LayerConstraintOverride` values in",
+          "success": false,
+          "error": "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_",
+          "verifyConfidence": 96,
+          "issues": [
+            "`src/moe_surgeon/prune/planner.py:41-55` and `src/moe_surgeon/prune/planner.py:256-267` still allow contradictory exact layer targets. I reproduced that `LayerConstraintOverride(target_experts=1, min_experts=2)` and `LayerConstraintOverride(target_experts=3, max_experts=2)` both build plans successfully, so invalid target sizes are not rejected early and the emitted `PrunePlan.constraints` can contradict the actual survivor budget. Reject `target_experts` when it falls outside override-local `min_experts`/`max_experts` and the resolved layer bounds.",
+            "`tests/test_prune_planner.py:341-394` covers zero/invalid scalar payloads and `target_experts < min_experts_per_layer`, but it does not cover `target_experts < override.min_experts` or `target_experts > override.max_experts`. Add regressions for both cases and assert an explicit validation error so this acceptance gap cannot pass with a green suite again."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T13:06:40.011Z"
         }
       ],
       "stuckSince": null
@@ -33,6 +45,20 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T11:24:11.244Z"
+        },
+        {
+          "approach": "Fixed the two requested issues.\n\n`src/moe_surgeon/prune/apply.py` now exists as the required public P8 module and re-exports `ApplyResult` / `apply_prune_plan` from the existing engine. `src/moe_surgeon/prune/__init__.py` now exports through that public path, and `CHANGELOG.md` records the delivered",
+          "success": false,
+          "error": "Lint is still red: `python -m ruff check src tests` and `python -m moe_surgeon.repo_metrics --check lint` both fail on the unused `LayerTopology` import at `tests/test_prune_apply.py:7`. Remove that i",
+          "verifyConfidence": 96,
+          "issues": [
+            "Lint is still red: `python -m ruff check src tests` and `python -m moe_surgeon.repo_metrics --check lint` both fail on the unused `LayerTopology` import at `tests/test_prune_apply.py:7`. Remove that import so the required quality gate passes.",
+            "The required test gate is still red: `python -m pytest -q` and `python -m moe_surgeon.repo_metrics --check tests` both fail at `tests/test_models_gemma4.py:343-353`. In this environment `transformers=5.5.4`, and current Hugging Face docs show Gemma4 support was added on 2026-04-01, so `Gemma4Backend.load()` at `src/moe_surgeon/models/gemma4.py:94-132` reaches real `from_pretrained()` calls instead of raising `UnsupportedModelError`, then fails on a live Hub 401/OSError. Make that test deterministic by monkeypatching missing runtime support, or change the backend to wrap remote load failures in an actionable domain error.",
+            "The P8 failure-case matrix is not fully covered yet. `tests/test_prune_applier.py:224-308` covers missing layer coverage, shape mismatches, and topology-count contradictions, but it does not explicitly test a plan containing an unknown extra layer index, and it does not exercise the `required prune tensor is missing from state_dict` branch in `src/moe_surgeon/prune/applier.py:540-558`. Add regressions for both to satisfy the PM checklist.",
+            "Dry-run determinism is present in manual verification but not pinned by an automated regression. I ran repeated `apply_prune_plan(..., dry_run=True)` calls locally and got identical `apply_id`, manifest JSON, and audit JSON, but there is no test asserting that acceptance point. Add one so the deterministic contract stays enforced."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T13:21:10.120Z"
         }
       ],
       "stuckSince": null
@@ -88,27 +114,10 @@
         }
       ],
       "stuckSince": null
-    },
-    "92149e40-8e02-42fc-9df0-d8a88cc98db5": {
-      "attempts": [
-        {
-          "approach": "Implemented in commit `c1e207b` (`fix: enforce gemma4 transformers support floor`).\n\n**What changed**\n- `pyproject.toml`: raised the declared floor to `transformers>=5.5.0`.\n- `src/moe_surgeon/models/gemma4.py`: added one Gemma4 support-floor contract (`5.5.0`, support added `2026-04-01`, first PyPI",
-          "success": false,
-          "error": "src/moe_surgeon/models/gemma4.py:541-542 still probes the lazy `transformers` module with raw `getattr(...)`. I verified that when attribute resolution raises on the supported floor (simulated `FileNo",
-          "verifyConfidence": 95,
-          "issues": [
-            "src/moe_surgeon/models/gemma4.py:541-542 still probes the lazy `transformers` module with raw `getattr(...)`. I verified that when attribute resolution raises on the supported floor (simulated `FileNotFoundError` during `Gemma4ForConditionalGeneration` lookup), `_validate_transformers_runtime_support(...)` leaks that raw exception instead of raising `UnsupportedModelError` with the documented `transformers>=5.5.0` remediation. Catch symbol-resolution exceptions and normalize them through the same Gemma4 support-floor diagnostic path.",
-            "tests/test_models_gemma4.py:384-408 only covers the supported-floor branch where the symbol lookup returns `None` via `SimpleNamespace`. It does not cover the real lazy-module failure mode where `getattr` raises, so the regression suite misses the backend error-path bug above. Add an offline test with a stub module whose `__getattr__` raises and assert the same actionable `UnsupportedModelError` message."
-          ],
-          "session": 1,
-          "timestamp": "2026-04-17T12:53:26.356Z"
-        }
-      ],
-      "stuckSince": null
     }
   },
   "metadata": {
     "createdAt": "2026-04-17T03:55:31.492Z",
-    "lastUpdated": "2026-04-17T12:53:26.356Z"
+    "lastUpdated": "2026-04-17T13:35:42.368Z"
   }
 }
