@@ -25,6 +25,7 @@ _SUPPORTED_MODEL_TYPE = "gemma4"
 _SUPPORTED_ARCHITECTURE = "Gemma4ForConditionalGeneration"
 _SUPPORT_ADDED_DATE = "2026-04-01"
 _DEFAULT_LAYER_PREFIX = "model.language_model.layers.{layer_index}"
+DEFAULT_REGISTRY_PRIORITY = 100
 _REQUIRED_LAYER_KEYS = {
     "router_proj": "router.proj.weight",
     "router_scale": "router.scale",
@@ -823,5 +824,15 @@ class Gemma4Backend:
                 details={"hidden_size": expected_hidden_size, "actual_shape": "x".join(map(str, shape))},
             )
 
+def default_registry_entry() -> tuple[Gemma4Backend, int]:
+    """Return the canonical default-registry registration for Gemma 4."""
 
-__all__ = ["Gemma4Backend", "Gemma4TopologyConfig"]
+    return Gemma4Backend(), DEFAULT_REGISTRY_PRIORITY
+
+
+__all__ = [
+    "DEFAULT_REGISTRY_PRIORITY",
+    "Gemma4Backend",
+    "Gemma4TopologyConfig",
+    "default_registry_entry",
+]

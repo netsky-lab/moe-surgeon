@@ -21,6 +21,13 @@
 - Expanded `tests/test_models_gemma4.py` with offline regression coverage for ordered MoE key traversal, non-MoE layer rejection, and unexpected layer-prefix mismatch handling.
 
 ## 2026-04-17
+- Registered the Gemma4 backend through a canonical default-registry entry in
+  `src/moe_surgeon/models/gemma4.py` and updated
+  `src/moe_surgeon/models/backend.py` to consume default backend entries in a
+  deterministic priority/name order.
+- Expanded Gemma4 backend tests to cover the default registry entry metadata
+  and resolution from lightweight explicit `BackendSignature` inputs alongside
+  config mappings.
 - Restored the `moe_surgeon.models.backend.BackendRegistry` compatibility
   import as a lazy export so the legacy import path still works without
   recreating the `backend.py`/`registry.py` circular import or adding import

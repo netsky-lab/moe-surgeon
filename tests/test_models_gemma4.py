@@ -14,7 +14,7 @@ from moe_surgeon.models.backend import (
     resolve_backend,
 )
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError, UnsupportedModelError
-from moe_surgeon.models.gemma4 import Gemma4Backend
+from moe_surgeon.models.gemma4 import DEFAULT_REGISTRY_PRIORITY, Gemma4Backend, default_registry_entry
 from moe_surgeon.schemas import ModelHandle
 
 
@@ -93,6 +93,13 @@ def test_gemma4_backend_supports_lightweight_signatures() -> None:
         BackendSignature(model_id="m", architecture="Gemma4ForConditionalGeneration")
     )
     assert not backend.supports(BackendSignature(model_id="m", model_type="llama"))
+
+
+def test_gemma4_default_registry_entry_uses_canonical_priority() -> None:
+    backend, priority = default_registry_entry()
+
+    assert backend.name == "gemma4"
+    assert priority == DEFAULT_REGISTRY_PRIORITY
 
 
 def test_gemma4_backend_extract_topology_returns_sorted_moe_layers() -> None:
@@ -269,9 +276,11 @@ def test_gemma4_backend_load_raises_actionable_error_when_runtime_support_is_mis
 def test_default_registry_resolves_gemma4_backend_from_mapping_and_signature() -> None:
     mapping = _gemma4_config()
     signature = BackendSignature.from_mapping(mapping)
+    model_type_only = BackendSignature(model_id="google/gemma-4-27b", model_type="gemma4")
 
     registry = build_backend_registry()
 
     assert registry.names() == ("gemma4",)
     assert registry.resolve(mapping).name == "gemma4"
     assert resolve_backend(signature).name == "gemma4"
+    assert resolve_backend(model_type_only).name == "gemma4"
