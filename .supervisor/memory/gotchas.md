@@ -1,3 +1,5 @@
 # Known Gotchas
 
 - 2026-04-17: [Define canonical data contracts and JSON serialization schema] `python -m moe_surgeon` is not executable and exits `No module named moe_surgeon.__main__`, so the requested `python -m moe_surgeon`-style import/run path is currently broken (`src/moe_surgeon/__init__.py` exists but no `__main__.py`).
+- 2026-04-17: [Define canonical data contracts and JSON serialization schema] `src/moe_surgeon/__main__.py:5` imports `sys` but never uses it. Running `python -m ruff check src tests` fails with `F401` (unused import). This is a real regression vs AGENTS quality gates and blocks the required lint check.
+- 2026-04-17: [Define canonical data contracts and JSON serialization schema] Project-level quality command for JavaScript (`npm run lint`) is only `echo ok`, so automated verification can pass while `python -m ruff check src tests` fails. CI/verification should call the real Python lint command required by AGENTS to avoid false-green results.

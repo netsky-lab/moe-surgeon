@@ -15,6 +15,19 @@
           ],
           "session": 1,
           "timestamp": "2026-04-17T03:33:58.286Z"
+        },
+        {
+          "approach": "Implemented and committed as:\n\n- `fix: address verify issues in schemas and module entrypoint`\n  Commit: `4e03f0e`\n\nWhat was fixed:\n\n1) Strict typing and schema helpers (`src/moe_surgeon/schemas.py`)\n- Corrected generic typing for `TypeVar` and `from_dict` return flow.\n- Fixed multiple strict-type m",
+          "success": false,
+          "error": "`src/moe_surgeon/__main__.py:5` imports `sys` but never uses it. Running `python -m ruff check src tests` fails with `F401` (unused import). This is a real regression vs AGENTS quality gates and block",
+          "verifyConfidence": 83,
+          "issues": [
+            "`src/moe_surgeon/__main__.py:5` imports `sys` but never uses it. Running `python -m ruff check src tests` fails with `F401` (unused import). This is a real regression vs AGENTS quality gates and blocks the required lint check.",
+            "`tests` cover positive serialization/ordering cases but do not currently assert explicit error branches for malformed schema payloads in `from_json`/`from_dict` across all schema types (e.g., unknown `__schema_type`, malformed tuple/mapping payload for `PrunePlan`/`RunArtifactManifest`). PM verification criterion asks to preserve failure-branch behavior, so add targeted tests there.",
+            "Project-level quality command for JavaScript (`npm run lint`) is only `echo ok`, so automated verification can pass while `python -m ruff check src tests` fails. CI/verification should call the real Python lint command required by AGENTS to avoid false-green results."
+          ],
+          "session": 2,
+          "timestamp": "2026-04-17T03:37:49.449Z"
         }
       ],
       "stuckSince": null
@@ -22,6 +35,6 @@
   },
   "metadata": {
     "createdAt": "2026-04-17T03:26:57.409Z",
-    "lastUpdated": "2026-04-17T03:33:58.286Z"
+    "lastUpdated": "2026-04-17T03:37:49.449Z"
   }
 }
