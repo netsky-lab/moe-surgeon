@@ -43,6 +43,8 @@ class LayerConstraintOverride:
             value = getattr(self, field_name)
             if value is not None and value < 0:
                 raise ValueError(f"{field_name} must be >= 0")
+            if value == 0:
+                raise ValueError(f"{field_name} must be >= 1 when provided")
         if (
             self.min_experts is not None
             and self.max_experts is not None
@@ -61,12 +63,12 @@ class PlannerConstraints:
     layer_overrides: Mapping[int, LayerConstraintOverride] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.global_target_experts is not None and self.global_target_experts < 0:
-            raise ValueError("global_target_experts must be >= 0")
-        if self.min_experts_per_layer < 0:
-            raise ValueError("min_experts_per_layer must be >= 0")
-        if self.max_experts_per_layer is not None and self.max_experts_per_layer < 0:
-            raise ValueError("max_experts_per_layer must be >= 0")
+        if self.global_target_experts is not None and self.global_target_experts <= 0:
+            raise ValueError("global_target_experts must be >= 1 when provided")
+        if self.min_experts_per_layer <= 0:
+            raise ValueError("min_experts_per_layer must be >= 1")
+        if self.max_experts_per_layer is not None and self.max_experts_per_layer <= 0:
+            raise ValueError("max_experts_per_layer must be >= 1 when provided")
         if (
             self.max_experts_per_layer is not None
             and self.min_experts_per_layer > self.max_experts_per_layer

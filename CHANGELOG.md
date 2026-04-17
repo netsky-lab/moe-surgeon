@@ -117,6 +117,13 @@
   import as a lazy export so the legacy import path still works without
   recreating the `backend.py`/`registry.py` circular import or adding import
 ## 2026-04-17
+- Tightened `src/moe_surgeon/prune/planner.py` constraint validation so zero
+  global targets and zero-survivor per-layer overrides fail early with explicit
+  `ValueError` diagnostics instead of leaking through later schema validation.
+- Expanded `tests/test_prune_planner.py` with regression coverage for invalid
+  zero-target planner constraints and zero-survivor override guardrails.
+
+## 2026-04-17
 - Completed the P7 pruning strategy/planner hardening slice in
   `src/moe_surgeon/prune/planner.py` by recording canonical constraint JSON,
   resolved per-layer budget bounds, and candidate digests in deterministic plan

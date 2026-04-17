@@ -261,6 +261,9 @@ def test_planner_enforces_minimum_survivors_and_global_budget() -> None:
 
 
 def test_planner_rejects_invalid_global_budget_and_unknown_override_layer() -> None:
+    with pytest.raises(ValueError, match="must be >= 1 when provided"):
+        PlannerConstraints(global_target_experts=0)
+
     with pytest.raises(ValueError, match="below required minimum"):
         build_prune_plan(
             _topology(),
@@ -281,6 +284,23 @@ def test_planner_rejects_invalid_global_budget_and_unknown_override_layer() -> N
             ),
             model_signature="model-a",
         )
+
+
+def test_planner_rejects_zero_survivor_constraints_early() -> None:
+    with pytest.raises(ValueError, match="min_experts_per_layer must be >= 1"):
+        PlannerConstraints(min_experts_per_layer=0)
+
+    with pytest.raises(ValueError, match="max_experts_per_layer must be >= 1 when provided"):
+        PlannerConstraints(max_experts_per_layer=0)
+
+    with pytest.raises(ValueError, match="target_experts must be >= 1 when provided"):
+        LayerConstraintOverride(target_experts=0)
+
+    with pytest.raises(ValueError, match="min_experts must be >= 1 when provided"):
+        LayerConstraintOverride(min_experts=0)
+
+    with pytest.raises(ValueError, match="max_experts must be >= 1 when provided"):
+        LayerConstraintOverride(max_experts=0)
 
 
 def test_planner_rejects_infeasible_layer_bounds() -> None:
