@@ -3,38 +3,25 @@
     "6bdb2e57-b285-40b3-b8a3-0ca3eaf4da55": {
       "attempts": [
         {
-          "approach": "[Draft canonical dataclasses for analysis and topology outputs]: Implemented. All three subtasks are complete.\n\n### What changed\n- `src/moe_surgeon/schemas.py`\n  - Replaced with canonical, typed dataclasses and validation-rich contracts for:\n    - `ModelHandle`\n    - `LayerTopology`\n    - `RouterSta",
+          "approach": "Implemented and committed as `c9ffb6d` with message `fix: address verify issues - lint and schema guards`.\n\nI fixed all three verifier findings. In [__main__.py](/home/netsky/dev/labs/moe-surgeon/src/moe_surgeon/__main__.py) I removed the unused `sys` import so `ruff` no longer fails with `F401`. In",
           "success": false,
-          "error": "`python -m mypy src` fails (13 strict-typing errors) in `src/moe_surgeon/schemas.py` (e.g., TypeVar binding mismatch at `src/moe_surgeon/schemas.py:58`, invalid return types/uses at `:78`, `:85`, `:23",
-          "verifyConfidence": 88,
+          "error": "`src/moe_surgeon/schemas.py:325-331` only coerces mapping `model_handle` values for `RunArtifactManifest`, not for `PrunePlan`. Direct repro still fails: `from_json(to_json(PrunePlan(model_signature='",
+          "verifyConfidence": 97,
           "issues": [
-            "`python -m mypy src` fails (13 strict-typing errors) in `src/moe_surgeon/schemas.py` (e.g., TypeVar binding mismatch at `src/moe_surgeon/schemas.py:58`, invalid return types/uses at `:78`, `:85`, `:239`, `:333-335`, tuple/list coercion issues in `_coerce_mapping_for_payload`, and `sort_topology` return annotation mismatch at `src/moe_surgeon/schemas.py:956`). This violates the project quality gate and P1 strict typing expectation.",
-            "`python -m moe_surgeon` is not executable and exits `No module named moe_surgeon.__main__`, so the requested `python -m moe_surgeon`-style import/run path is currently broken (`src/moe_surgeon/__init__.py` exists but no `__main__.py`).",
-            "Deterministic canonical JSON is not stable for default-constructed objects across processes: default timestamp fields (`created_at`/`started_at`) are auto-generated at init (`src/moe_surgeon/schemas.py:354`, `:828`), so two equivalent `PrunePlan()` instances in different runs produce different JSON payloads (`python -m`, verified with back-to-back process checks). This undermines reproducibility requirements for canonical outputs.",
-            "The provided execution/review claims are inconsistent with collected evidence: prior summary states quality checks/tests are fully passing, but rerun shows `python -m mypy src` fails and JSON reproducibility of default objects is not stable. Treating those claims as ground truth without rerun would be incorrect."
+            "`src/moe_surgeon/schemas.py:325-331` only coerces mapping `model_handle` values for `RunArtifactManifest`, not for `PrunePlan`. Direct repro still fails: `from_json(to_json(PrunePlan(model_signature='m', model_handle=ModelHandle(model_id='abc'), ...)))` raises `SchemaValidationError: model_handle must be ModelHandle`, so deterministic round-trip is still broken for a canonical schema type.",
+            "`src/moe_surgeon/schemas.py:726-763` does not enforce range/coverage invariants for `PrunePlanItem`. Impossible mappings such as `PrunePlanItem(layer_index=0, keep_indices=(0, 99), drop_indices=(), source_expert_count=2)` construct successfully, so invalid expert indices are not rejected despite the task's strict invariant requirement.",
+            "`package.json:7` wires `npm test` to `node --test src/**/*.test.js`, and the authoritative run still executes `0` tests. The configured suite does not exercise `tests/test_schemas.py`, so current machine checks would not catch the schema regressions above.",
+            "`tests/test_schemas.py` adds negative-path cases, but it still lacks coverage for the failing `PrunePlan.model_handle` round-trip and for out-of-range/non-covering `PrunePlanItem` expert mappings, leaving key contract bugs untested."
           ],
           "session": 1,
-          "timestamp": "2026-04-17T03:33:58.286Z"
-        },
-        {
-          "approach": "Implemented and committed as:\n\n- `fix: address verify issues in schemas and module entrypoint`\n  Commit: `4e03f0e`\n\nWhat was fixed:\n\n1) Strict typing and schema helpers (`src/moe_surgeon/schemas.py`)\n- Corrected generic typing for `TypeVar` and `from_dict` return flow.\n- Fixed multiple strict-type m",
-          "success": false,
-          "error": "`src/moe_surgeon/__main__.py:5` imports `sys` but never uses it. Running `python -m ruff check src tests` fails with `F401` (unused import). This is a real regression vs AGENTS quality gates and block",
-          "verifyConfidence": 83,
-          "issues": [
-            "`src/moe_surgeon/__main__.py:5` imports `sys` but never uses it. Running `python -m ruff check src tests` fails with `F401` (unused import). This is a real regression vs AGENTS quality gates and blocks the required lint check.",
-            "`tests` cover positive serialization/ordering cases but do not currently assert explicit error branches for malformed schema payloads in `from_json`/`from_dict` across all schema types (e.g., unknown `__schema_type`, malformed tuple/mapping payload for `PrunePlan`/`RunArtifactManifest`). PM verification criterion asks to preserve failure-branch behavior, so add targeted tests there.",
-            "Project-level quality command for JavaScript (`npm run lint`) is only `echo ok`, so automated verification can pass while `python -m ruff check src tests` fails. CI/verification should call the real Python lint command required by AGENTS to avoid false-green results."
-          ],
-          "session": 2,
-          "timestamp": "2026-04-17T03:37:49.449Z"
+          "timestamp": "2026-04-17T04:02:09.160Z"
         }
       ],
       "stuckSince": null
     }
   },
   "metadata": {
-    "createdAt": "2026-04-17T03:26:57.409Z",
-    "lastUpdated": "2026-04-17T03:37:49.449Z"
+    "createdAt": "2026-04-17T03:55:31.492Z",
+    "lastUpdated": "2026-04-17T04:02:09.160Z"
   }
 }
