@@ -329,6 +329,12 @@ def test_planner_rejects_zero_survivor_constraints_early() -> None:
     with pytest.raises(ValueError, match="max_experts must be an integer when provided"):
         LayerConstraintOverride(max_experts=1.2)  # type: ignore[arg-type]
 
+    with pytest.raises(ValueError, match="target_experts cannot be below min_experts"):
+        LayerConstraintOverride(target_experts=1, min_experts=2)
+
+    with pytest.raises(ValueError, match="target_experts cannot exceed max_experts"):
+        LayerConstraintOverride(target_experts=3, max_experts=2)
+
 
 def test_planner_rejects_invalid_layer_override_keys_and_values() -> None:
     with pytest.raises(ValueError, match="layer_overrides keys must be integers"):
@@ -389,6 +395,22 @@ def test_planner_rejects_target_override_below_minimum_survivor_guardrail() -> N
                 global_target_experts=3,
                 min_experts_per_layer=2,
                 layer_overrides={0: LayerConstraintOverride(target_experts=1)},
+            ),
+            model_signature="model-a",
+        )
+
+
+def test_planner_rejects_target_override_outside_resolved_layer_bounds() -> None:
+    with pytest.raises(ValueError, match="target_experts exceeds the resolved maximum_keep 2"):
+        build_prune_plan(
+            _topology(),
+            strategy="frequency",
+            activation_stats=_activation_stats(),
+            constraints=PlannerConstraints(
+                global_target_experts=4,
+                min_experts_per_layer=1,
+                max_experts_per_layer=2,
+                layer_overrides={0: LayerConstraintOverride(target_experts=3)},
             ),
             model_signature="model-a",
         )

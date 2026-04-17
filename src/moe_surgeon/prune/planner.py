@@ -53,6 +53,12 @@ class LayerConstraintOverride:
             and self.min_experts > self.max_experts
         ):
             raise ValueError("min_experts cannot exceed max_experts")
+        if self.target_experts is not None and self.min_experts is not None:
+            if self.target_experts < self.min_experts:
+                raise ValueError("target_experts cannot be below min_experts")
+        if self.target_experts is not None and self.max_experts is not None:
+            if self.target_experts > self.max_experts:
+                raise ValueError("target_experts cannot exceed max_experts")
 
 
 @dataclass(frozen=True)
@@ -262,6 +268,16 @@ def _layer_budgets(
                 if override.target_experts < constraints.min_experts_per_layer:
                     raise ValueError(
                         "layer target_experts cannot be below min_experts_per_layer"
+                    )
+                if override.target_experts < minimum_keep:
+                    raise ValueError(
+                        f"layer {layer.layer_index} target_experts is below the resolved minimum_keep "
+                        f"{minimum_keep}"
+                    )
+                if override.target_experts > maximum_keep:
+                    raise ValueError(
+                        f"layer {layer.layer_index} target_experts exceeds the resolved maximum_keep "
+                        f"{maximum_keep}"
                     )
                 minimum_keep = override.target_experts
                 maximum_keep = override.target_experts
