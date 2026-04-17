@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Replayed the supervisor task-metrics persistence path for task
+  `97333f84-e4ed-4f1a-b3d5-0930408fa389` after the verify-config fix so the
+  stored authoritative task record and `.supervisor/logs/task-97333f84.log`
+  now report `lint`, `typecheck`, and `test_suite` with a `3/3` summary.
 - Reproduced the authoritative supervisor collector path that previously
   reported `2/2` for this repo, confirmed the root cause was a stale persisted
   supervisor `verifyConfig` with `typeCheckCommand: null`, and added regression
