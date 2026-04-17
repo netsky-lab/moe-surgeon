@@ -408,6 +408,43 @@ def test_gemma4_backend_load_raises_actionable_error_when_symbols_are_missing_at
     assert "reinstall a standard Hugging Face transformers build" in message
 
 
+def test_gemma4_backend_load_normalizes_lazy_symbol_resolution_errors_at_supported_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Gemma4Backend()
+    signature = BackendSignature.from_mapping(_gemma4_config())
+
+    class LazyTransformersModule:
+        AutoTokenizer = object()
+
+        def __getattr__(self, name: str) -> object:
+            if name == "Gemma4ForConditionalGeneration":
+                raise FileNotFoundError("lazy Gemma4 module import failed")
+            raise AttributeError(name)
+
+    def fake_import_module(name: str) -> object:
+        if name == "transformers":
+            return LazyTransformersModule()
+        raise AssertionError(name)
+
+    monkeypatch.setattr("moe_surgeon.models.gemma4.import_module", fake_import_module)
+    monkeypatch.setattr(
+        Gemma4Backend,
+        "_installed_version",
+        lambda self, package_name: {"transformers": "5.5.0", "torch": "2.5.1"}.get(package_name),
+    )
+
+    with pytest.raises(UnsupportedModelError, match="unsupported model family") as exc_info:
+        backend.load(signature)
+
+    message = str(exc_info.value)
+    assert "installed_transformers_version=5.5.0" in message
+    assert f"minimum_transformers_version={_MINIMUM_TRANSFORMERS_VERSION}" in message
+    assert "symbol_name=Gemma4ForConditionalGeneration" in message
+    assert "symbol_resolution_error=FileNotFoundError: lazy Gemma4 module import failed" in message
+    assert "reinstall a standard Hugging Face transformers build" in message
+
+
 def test_gemma4_transformers_floor_matches_pyproject_dependency() -> None:
     project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
     dependencies = project["project"]["dependencies"]

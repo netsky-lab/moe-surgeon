@@ -113,17 +113,14 @@ class Gemma4Backend:
                 },
             ) from exc
 
-        self._validate_transformers_runtime_support(
+        model_class, tokenizer_class = self._validate_transformers_runtime_support(
             signature=signature,
             installed_transformers_version=transformers_version,
             transformers_module=transformers_module,
             source=source,
         )
-
-        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
-        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
-        assert model_class is not None
-        assert tokenizer_class is not None
+        model_class = cast(Any, model_class)
+        tokenizer_class = cast(Any, tokenizer_class)
 
         torch_module = import_module("torch")
         resolved_dtype = self._resolve_torch_dtype(torch_module, dtype)
@@ -520,7 +517,7 @@ class Gemma4Backend:
         installed_transformers_version: str | None,
         transformers_module: object,
         source: str,
-    ) -> None:
+    ) -> tuple[object, object]:
         normalized_version = installed_transformers_version or "unknown"
         if not self._is_supported_transformers_version(installed_transformers_version):
             raise UnsupportedModelError(
@@ -538,8 +535,20 @@ class Gemma4Backend:
                 },
             )
 
-        model_class = getattr(transformers_module, _SUPPORTED_ARCHITECTURE, None)
-        tokenizer_class = getattr(transformers_module, "AutoTokenizer", None)
+        model_class = self._lookup_transformers_symbol(
+            signature=signature,
+            transformers_module=transformers_module,
+            installed_transformers_version=normalized_version,
+            source=source,
+            symbol_name=_SUPPORTED_ARCHITECTURE,
+        )
+        tokenizer_class = self._lookup_transformers_symbol(
+            signature=signature,
+            transformers_module=transformers_module,
+            installed_transformers_version=normalized_version,
+            source=source,
+            symbol_name="AutoTokenizer",
+        )
         if model_class is None or tokenizer_class is None:
             raise UnsupportedModelError(
                 signature.model_id,
@@ -559,6 +568,40 @@ class Gemma4Backend:
                     "source": source,
                 },
             )
+        return model_class, tokenizer_class
+
+    def _lookup_transformers_symbol(
+        self,
+        *,
+        signature: BackendSignature,
+        transformers_module: object,
+        installed_transformers_version: str,
+        source: str,
+        symbol_name: str,
+    ) -> object | None:
+        try:
+            return getattr(transformers_module, symbol_name, None)
+        except Exception as exc:
+            raise UnsupportedModelError(
+                signature.model_id,
+                available_backends=(self.name,),
+                details={
+                    "backend_name": self.name,
+                    "installed_transformers_version": installed_transformers_version,
+                    "minimum_transformers_version": _MINIMUM_TRANSFORMERS_VERSION,
+                    "minimum_transformers_pypi_release_date": _MINIMUM_TRANSFORMERS_PYPI_RELEASE_DATE,
+                    "required_symbol": _SUPPORTED_ARCHITECTURE,
+                    "support_added_on": _SUPPORT_ADDED_DATE,
+                    "guidance": (
+                        f"{self._upgrade_guidance()} If you already installed "
+                        f"transformers>={_MINIMUM_TRANSFORMERS_VERSION}, reinstall a standard Hugging Face "
+                        "transformers build because the Gemma4 symbols are missing."
+                    ),
+                    "source": source,
+                    "symbol_resolution_error": f"{exc.__class__.__name__}: {exc}",
+                    "symbol_name": symbol_name,
+                },
+            ) from exc
 
     def _is_supported_transformers_version(self, version: str | None) -> bool:
         if version is None:

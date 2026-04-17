@@ -164,3 +164,4 @@
 - Updated the Gemma4 runtime contract to require `transformers>=5.5.0`, the first PyPI release after Hugging Face documented Gemma4 support on 2026-04-01, and aligned the backend diagnostics to report the same minimum version, release date, and upgrade path.
 - Tightened `pyproject.toml` and `README.md` so package metadata and setup guidance no longer imply pre-5.5.0 Transformers releases are acceptable for Gemma4 execution.
 - Expanded `tests/test_models_gemma4.py` with offline regressions for below-floor runtime failures, missing-symbol failures at the supported floor, and a packaging-floor consistency check against `pyproject.toml`.
+- Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
