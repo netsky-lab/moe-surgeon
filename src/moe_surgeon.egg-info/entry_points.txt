@@ -1,0 +1,2 @@
+[console_scripts]
+moe-surgeon = moe_surgeon.cli.main:main
