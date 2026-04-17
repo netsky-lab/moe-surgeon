@@ -1,0 +1,5 @@
+{
+  "repoMetricsConfig": {
+    "testCommand": "python -m pytest"
+  }
+}
