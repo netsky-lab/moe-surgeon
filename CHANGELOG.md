@@ -148,6 +148,10 @@
   help rendering, and heavy dependency avoidance on the help path.
 
 ## 2026-04-17
+- Added capability-gated live Gemma4 profiler coverage in `tests/test_runtime_profiler.py` using the pinned public MoE fixture `tiny-random/gemma-4-moe` to validate real router hook captures during both forward and generation paths once the local Transformers environment exposes Gemma4 support.
+- The live profiler test currently skips on environments such as `transformers 4.51.3` where `transformers.models.gemma4` and `Gemma4ForConditionalGeneration` are not yet installed, preserving the existing offline/unit test baseline while automatically activating after the dependency upgrade.
+
+## 2026-04-17
 - Completed P5 static router metric hardening in `src/moe_surgeon/analysis/metrics.py` and `src/moe_surgeon/analysis/scan.py` by deriving deterministic softmax-based expert distributions, replacing unstable `topk` tie handling with stable sorting, and adding an aggregate scan summary over ordered MoE layers.
 - Expanded `tests/test_analysis_scan.py` with deterministic tie-case coverage, aggregate-summary assertions, and scan regression checks for finite non-negative expert metrics.
 

@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import importlib
+from importlib import metadata as importlib_metadata
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 
 import pytest
 
-from moe_surgeon.models.backend import LoadedBackendBundle
+from huggingface_hub import hf_hub_download
+
+from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.runtime.bench import RouterActivationProfiler, benchmark, iter_prompt_batches
 from moe_surgeon.schemas import LayerTopology, ModelHandle, RouterState
+
+_LIVE_GEMMA4_MODEL_ID = "tiny-random/gemma-4-moe"
+_LIVE_GEMMA4_REVISION = "4142709ae44d9bbf3aa363cc4632d4dc4ce4f2a0"
 
 
 @dataclass
@@ -119,6 +128,42 @@ def _bundle() -> LoadedBackendBundle:
         model_handle=ModelHandle(model_id="fake-model", backend_name="fake"),
         model=SimpleNamespace(),
         config={},
+    )
+
+
+def _require_live_gemma4_runtime() -> tuple[object, object]:
+    try:
+        transformers = importlib.import_module("transformers")
+        importlib.import_module("transformers.models.gemma4")
+    except Exception:
+        version = importlib_metadata.version("transformers")
+        pytest.skip(
+            f"live Gemma4 profiler coverage requires a transformers build with gemma4 support; "
+            f"installed version is {version}"
+        )
+
+    model_class = getattr(transformers, "Gemma4ForConditionalGeneration", None)
+    if model_class is None:
+        version = importlib_metadata.version("transformers")
+        pytest.skip(
+            f"live Gemma4 profiler coverage requires transformers.Gemma4ForConditionalGeneration; "
+            f"installed version is {version}"
+        )
+    return transformers, model_class
+
+
+def _live_gemma4_signature() -> BackendSignature:
+    config_path = hf_hub_download(
+        repo_id=_LIVE_GEMMA4_MODEL_ID,
+        revision=_LIVE_GEMMA4_REVISION,
+        filename="config.json",
+    )
+    with open(config_path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+    return BackendSignature.from_mapping(
+        config,
+        model_id=_LIVE_GEMMA4_MODEL_ID,
+        source_path=_LIVE_GEMMA4_MODEL_ID,
     )
 
 
@@ -485,3 +530,70 @@ def test_iter_prompt_batches_uses_attention_mask_for_active_token_counts() -> No
         "prompt_indices": [0, 1],
         "active_token_count": 3,
     }
+
+
+def test_router_activation_profiler_matches_live_gemma4_router_contract() -> None:
+    _require_live_gemma4_runtime()
+
+    torch = importlib.import_module("torch")
+    backend = Gemma4Backend()
+    signature = _live_gemma4_signature()
+    bundle = backend.load(signature, dtype="float32", seed=0)
+    tokenizer = bundle.tokenizer
+    assert tokenizer is not None
+
+    topology = backend.extract_topology(bundle)
+    layer_indices = {layer.layer_index for layer in topology}
+    assert layer_indices == {0, 1, 2, 3}
+
+    encoded_inputs = tokenizer("router coverage", return_tensors="pt")
+    attention_mask = encoded_inputs["attention_mask"]
+    model = cast(object, bundle.model)
+    getattr(model, "eval")()
+
+    with torch.no_grad():
+        with RouterActivationProfiler(
+            backend=backend,
+            bundle=bundle,
+            topology=topology,
+            include_router_scores=True,
+        ) as profiler:
+            getattr(model, "__call__")(
+                input_ids=encoded_inputs["input_ids"],
+                attention_mask=attention_mask,
+                use_cache=False,
+            )
+            forward_records = tuple(profiler.records)
+            assert {record.layer_index for record in forward_records} == layer_indices
+
+            for record in forward_records:
+                layer = next(item for item in topology if item.layer_index == record.layer_index)
+                router_state = backend.extract_router_state(bundle, layer=layer)
+                assert tuple(int(dim) for dim in cast(object, record.top_k_indices).shape)[-1] == router_state.top_k
+                assert tuple(int(dim) for dim in cast(object, record.top_k_weights).shape)[-1] == router_state.top_k
+                assert record.router_scores is not None
+                assert tuple(int(dim) for dim in cast(object, record.router_scores).shape)[-1] == (
+                    router_state.num_experts
+                )
+
+            forward_stats = profiler.accumulate(attention_mask=attention_mask)
+            assert any(item.token_count > 0 for item in forward_stats)
+            assert {
+                item.layer_index for item in forward_stats if item.token_count > 0
+            } == layer_indices
+
+            profiler.reset_aggregation()
+            profiler.clear_records()
+
+            generated = getattr(model, "generate")(
+                input_ids=encoded_inputs["input_ids"],
+                attention_mask=attention_mask,
+                max_new_tokens=1,
+                do_sample=False,
+            )
+            generation_records = tuple(profiler.records)
+            assert generated.shape[0] == encoded_inputs["input_ids"].shape[0]
+            assert len(generation_records) >= len(topology)
+
+            generation_stats = profiler.accumulate(attention_mask=attention_mask)
+            assert any(item.token_count > 0 for item in generation_stats)
