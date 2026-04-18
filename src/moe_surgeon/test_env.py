@@ -16,6 +16,10 @@ REPO_ROOT_MARKERS = (
     ".supervisor/project.json",
     "src/moe_surgeon/repo_metrics.py",
 )
+FIXTURE_ROOT_MARKERS = (
+    "pyproject.toml",
+    "src/sitecustomize.py",
+)
 
 
 def bootstrap_repo_quality_gate_env(start_path: Path | None = None) -> None:
@@ -34,7 +38,9 @@ def find_repo_root(start_path: Path) -> Path | None:
 
     search_path = start_path if start_path.is_dir() else start_path.parent
     for candidate in (search_path, *search_path.parents):
-        if all((candidate / marker).exists() for marker in REPO_ROOT_MARKERS):
+        if _matches_root_markers(candidate, REPO_ROOT_MARKERS) or _matches_root_markers(
+            candidate, FIXTURE_ROOT_MARKERS
+        ):
             return candidate
     return None
 
@@ -52,7 +58,7 @@ def apply_quality_gate_env(
     target_env.setdefault("RUFF_NO_CACHE", "true")
     target_env.setdefault("MYPY_CACHE_DIR", os.devnull)
 
-    if not has_usable_tempdir(target_env):
+    if not has_usable_tempdir(target_env) or not tempdir_matches_root(root_path, target_env):
         repo_temp_dir = (
             ensure_repo_pytest_tempdir(root_path)
             if prefer_pytest_temp
@@ -103,6 +109,27 @@ def has_usable_tempdir(env: MutableMapping[str, str]) -> bool:
         if value and _is_writable_directory(Path(value).expanduser()):
             return True
     return False
+
+
+def tempdir_matches_root(root_path: Path, env: MutableMapping[str, str]) -> bool:
+    """Return whether a configured tempdir already points inside ``root_path``."""
+
+    resolved_root = root_path.resolve()
+    for key in TEMP_ENV_KEYS:
+        value = env.get(key)
+        if not value:
+            continue
+        try:
+            resolved_value = Path(value).expanduser().resolve()
+            resolved_value.relative_to(resolved_root)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        return True
+    return False
+
+
+def _matches_root_markers(candidate: Path, markers: tuple[str, ...]) -> bool:
+    return all((candidate / marker).exists() for marker in markers)
 
 
 def _is_writable_directory(path: Path) -> bool:

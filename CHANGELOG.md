@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fixed the repo-scoped tempdir bootstrap in `src/moe_surgeon/test_env.py`
+  so hostile-temp quality-gate subprocesses now materialize `.tmp/system`
+  for both direct `python -m pytest` / `ruff` / `mypy` runs in minimal fixture
+  repos and the repo-metrics collector path, even when a parent process has
+  already repaired its own tempdir to a different repo root.
 - Restored the tracked local safetensors checkpoint reader in
   `src/moe_surgeon/models/checkpoints.py` with deterministic config/index
   parsing, single-file and sharded layout support, targeted tensor loads, and
