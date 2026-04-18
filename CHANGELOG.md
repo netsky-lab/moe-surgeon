@@ -30,10 +30,10 @@
   explicit caller-provided `PYTHONPATH` entries, and repo-root startup now
   chains to any `PYTHONPATH`-provided `sitecustomize.py` used by subprocess
   import probes.
-- Reconciled the task ledger for the already-merged checkpoint-reader
-  regression covering indexed keys that point to an existing shard file whose
-  payload omits the indexed tensor; the regression remains in
-  `tests/test_models_checkpoints.py` and the root quality gate passes.
+- Added the previously missing checkpoint-reader regression for the post-open
+  payload-loss path where an indexed shard is rewritten after
+  `open_local_safetensors_checkpoint()` succeeds and a later `load_tensors()`
+  call finds the indexed tensor key missing from the shard payload.
 - Hardened `src/moe_surgeon/repo_metrics.py` so missing repo-local
   `.supervisor/project.json` files now fail with a clean
   `MetricsConfigurationError` message instead of leaking a raw
