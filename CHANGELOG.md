@@ -2,17 +2,25 @@
 
 ## Unreleased
 
+- Pinned pytest discovery to `tests/` in `pyproject.toml` so helper modules
+  under `src/` such as `src/moe_surgeon/test_env.py` are not collected as test
+  files, avoiding worktree/import-mismatch failures during repo-metrics and
+  direct pytest runs.
 - Threaded indexed tensor context through shard-path validation in
   `src/moe_surgeon/models/checkpoints.py` so missing-shard and unsafe-path
   diagnostics now include `tensor_key` during index probe, metadata reads, and
   targeted `load_tensors()` calls, and expanded
   `tests/test_models_checkpoints.py` with explicit tensor-context assertions
-  plus a post-open missing-shard regression for targeted loads.
+  plus regressions for both post-open missing-shard targeted loads and indexed
+  keys that are present in the checkpoint index but omitted from an existing
+  shard payload.
 - Fixed the repo-scoped tempdir bootstrap in `src/moe_surgeon/test_env.py`
   so hostile-temp quality-gate subprocesses now materialize `.tmp/system`
   for both direct `python -m pytest` / `ruff` / `mypy` runs in minimal fixture
   repos and the repo-metrics collector path, even when a parent process has
-  already repaired its own tempdir to a different repo root.
+  already repaired its own tempdir to a different repo root, and aligned the
+  hostile-temp fixture in `tests/test_repo_metrics.py` with the repo-root
+  sentinel files the startup hook expects.
 - Restored the tracked local safetensors checkpoint reader in
   `src/moe_surgeon/models/checkpoints.py` with deterministic config/index
   parsing, single-file and sharded layout support, targeted tensor loads, and

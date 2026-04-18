@@ -348,6 +348,7 @@ def test_checkpoint_probe_rejects_indexed_keys_missing_from_existing_shard(tmp_p
 
     message = str(exc_info.value)
     assert "tensor_key=known.tensor" in message
+    assert f"checkpoint_path={tmp_path.resolve()}" in message
     assert "shard_filename=model-00001-of-00001.safetensors" in message
 
 

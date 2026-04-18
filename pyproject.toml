@@ -53,6 +53,7 @@ addopts = [
   "-m",
   "not integration",
 ]
+testpaths = ["tests"]
 markers = [
   "integration: opt-in tests that may access live external services or model artifacts",
 ]

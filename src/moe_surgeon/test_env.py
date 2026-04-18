@@ -58,7 +58,7 @@ def apply_quality_gate_env(
     target_env.setdefault("RUFF_NO_CACHE", "true")
     target_env.setdefault("MYPY_CACHE_DIR", os.devnull)
 
-    if not has_usable_tempdir(target_env) or not tempdir_matches_root(root_path, target_env):
+    if not has_usable_tempdir(target_env, root_path=root_path):
         repo_temp_dir = (
             ensure_repo_pytest_tempdir(root_path)
             if prefer_pytest_temp
@@ -101,31 +101,29 @@ def ensure_repo_pytest_tempdir(root_path: Path) -> Path:
     return repo_temp_dir
 
 
-def has_usable_tempdir(env: MutableMapping[str, str]) -> bool:
+def has_usable_tempdir(
+    env: MutableMapping[str, str],
+    *,
+    root_path: Path | None = None,
+) -> bool:
     """Return whether the current tempdir environment points to a writable dir."""
 
     for key in TEMP_ENV_KEYS:
         value = env.get(key)
-        if value and _is_writable_directory(Path(value).expanduser()):
-            return True
+        if not value:
+            continue
+        temp_path = Path(value).expanduser()
+        if not _is_writable_directory(temp_path):
+            continue
+        if root_path is not None and not _is_relative_to(temp_path.resolve(), root_path.resolve()):
+            continue
+        return True
     return False
 
 
 def tempdir_matches_root(root_path: Path, env: MutableMapping[str, str]) -> bool:
     """Return whether a configured tempdir already points inside ``root_path``."""
-
-    resolved_root = root_path.resolve()
-    for key in TEMP_ENV_KEYS:
-        value = env.get(key)
-        if not value:
-            continue
-        try:
-            resolved_value = Path(value).expanduser().resolve()
-            resolved_value.relative_to(resolved_root)
-        except (OSError, RuntimeError, ValueError):
-            continue
-        return True
-    return False
+    return has_usable_tempdir(env, root_path=root_path)
 
 
 def _matches_root_markers(candidate: Path, markers: tuple[str, ...]) -> bool:
@@ -137,3 +135,11 @@ def _is_writable_directory(path: Path) -> bool:
         return path.is_dir() and os.access(path, os.W_OK | os.X_OK)
     except OSError:
         return False
+
+
+def _is_relative_to(path: Path, root_path: Path) -> bool:
+    try:
+        path.relative_to(root_path)
+    except ValueError:
+        return False
+    return True
