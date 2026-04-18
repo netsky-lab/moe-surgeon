@@ -20,7 +20,6 @@ src/moe_surgeon/cli/main.py
 src/moe_surgeon/export/__init__.py
 src/moe_surgeon/models/__init__.py
 src/moe_surgeon/models/backend.py
-src/moe_surgeon/models/checkpoints.py
 src/moe_surgeon/models/errors.py
 src/moe_surgeon/models/gemma4.py
 src/moe_surgeon/models/registry.py
@@ -33,7 +32,6 @@ src/moe_surgeon/runtime/bench.py
 src/moe_surgeon/runtime/profiler.py
 tests/test_analysis_scan.py
 tests/test_cli.py
-tests/test_models_checkpoints.py
 tests/test_models_gemma4.py
 tests/test_models_registry.py
 tests/test_prune_planner.py
