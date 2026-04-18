@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Hardened repo-local startup bootstrapping in `sitecustomize.py` and
+  `src/moe_surgeon/test_env.py` so Python processes launched from this checkout
+  keep the current worktree `src/` on the import path without overriding
+  explicit caller-provided `PYTHONPATH` entries, and repo-root startup now
+  chains to any `PYTHONPATH`-provided `sitecustomize.py` used by subprocess
+  import probes.
 - Reconciled the task ledger for the already-merged checkpoint-reader
   regression covering indexed keys that point to an existing shard file whose
   payload omits the indexed tensor; the regression remains in

@@ -81,17 +81,21 @@ def ensure_repo_src_import_path(
     """Prefer the current checkout's ``src/`` tree over stale editable installs."""
 
     src_path = str((root_path / "src").resolve())
-    target_env = os.environ if env is None else env
-    python_path = target_env.get("PYTHONPATH")
-
     if src_path not in sys.path:
         insert_at = 1 if sys.path and not sys.path[0] else 0
-        if python_path:
-            explicit_entries = [entry for entry in python_path.split(os.pathsep) if entry]
+        active_python_path = os.environ.get("PYTHONPATH")
+        if active_python_path:
+            explicit_entries = [entry for entry in active_python_path.split(os.pathsep) if entry]
             for entry in explicit_entries:
                 if entry in sys.path[insert_at:]:
                     insert_at = max(insert_at, sys.path.index(entry) + 1)
         sys.path.insert(insert_at, src_path)
+
+    if env is None:
+        return os.environ
+
+    target_env = env
+    python_path = target_env.get("PYTHONPATH")
 
     if not python_path:
         target_env["PYTHONPATH"] = src_path
