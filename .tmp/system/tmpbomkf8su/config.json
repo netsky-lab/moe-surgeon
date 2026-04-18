@@ -1,0 +1,1 @@
+{"_name_or_path": "google/gemma-4-27b", "_commit_hash": "rev-123", "architectures": ["Gemma4ForConditionalGeneration"], "model_type": "gemma4", "text_config": {"num_hidden_layers": 2, "hidden_size": 3, "enable_moe_block": true, "num_experts": 4, "top_k_experts": 2, "moe_intermediate_size": 2, "moe_layer_indices": [0]}}
