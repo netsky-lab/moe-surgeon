@@ -12,7 +12,9 @@ import torch
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
-from moe_surgeon.schemas import ModelHandle, PrunePlan, PrunePlanItem
+from moe_surgeon.prune.planner import PlannerConstraints, build_prune_plan
+from moe_surgeon.prune.strategies import StrategyMetadata
+from moe_surgeon.schemas import LayerTopology, ModelHandle, PruneCandidate, PrunePlan, PrunePlanItem
 
 
 def _gemma4_config() -> dict[str, object]:
@@ -88,6 +90,32 @@ def _write_checkpoint(root: Path, *, state_dict: dict[str, torch.Tensor] | None 
     return tensors
 
 
+def _write_sharded_checkpoint(root: Path, *, state_dict: dict[str, torch.Tensor] | None = None) -> dict[str, torch.Tensor]:
+    tensors = _state_dict() if state_dict is None else state_dict
+    _write_config(root)
+    first_shard_keys = tuple(sorted(key for key in tensors if "router" in key or "embed_tokens" in key))
+    second_shard_keys = tuple(sorted(key for key in tensors if key not in first_shard_keys))
+    first_shard = {key: tensors[key] for key in first_shard_keys}
+    second_shard = {key: tensors[key] for key in second_shard_keys}
+    first_name = "model-00001-of-00002.safetensors"
+    second_name = "model-00002-of-00002.safetensors"
+    save_file(first_shard, str(root / first_name))
+    save_file(second_shard, str(root / second_name))
+    (root / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": 0},
+                "weight_map": {
+                    **{key: first_name for key in first_shard_keys},
+                    **{key: second_name for key in second_shard_keys},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return tensors
+
+
 def _plan(*, layer_index: int = 0) -> PrunePlan:
     return PrunePlan(
         plan_id="plan-prune-0001",
@@ -105,6 +133,20 @@ def _plan(*, layer_index: int = 0) -> PrunePlan:
             ),
         ),
         model_handle=ModelHandle(model_id="google/gemma-4-27b", revision="rev-123", backend_name="gemma4"),
+    )
+
+
+def _planner_topology() -> tuple[LayerTopology, ...]:
+    return (
+        LayerTopology(
+            layer_index=0,
+            layer_name="model.language_model.layers.0",
+            layer_type="moe",
+            expert_count=4,
+            top_k=2,
+            hidden_size=3,
+            moe_intermediate_size=2,
+        ),
     )
 
 
@@ -138,6 +180,53 @@ def test_apply_prune_plan_dry_run_is_deterministic_and_reports_remap(tmp_path: P
     )
     assert "model.language_model.layers.0.router.scale" in first.passthrough_tensor_keys
     assert "model.embed_tokens.weight" in first.passthrough_tensor_keys
+
+
+def test_apply_prune_plan_accepts_planner_produced_default_model_signature(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+
+    class PlannerStrategy:
+        metadata = StrategyMetadata(
+            name="planner-test",
+            version="1",
+            score_columns=("score",),
+            normalization_behavior="none",
+        )
+
+        def build_candidates(
+            self,
+            topology: tuple[LayerTopology, ...],
+            *,
+            expert_stats: tuple[object, ...] | None = None,
+            activation_stats: tuple[object, ...] | None = None,
+        ) -> tuple[PruneCandidate, ...]:
+            del expert_stats, activation_stats
+            return tuple(
+                PruneCandidate(
+                    layer_index=layer.layer_index,
+                    expert_index=expert_index,
+                    score=float(layer.expert_count - expert_index),
+                    strategy_name=self.metadata.name,
+                )
+                for layer in topology
+                for expert_index in range(layer.expert_count)
+            )
+
+    plan = build_prune_plan(
+        _planner_topology(),
+        strategy=PlannerStrategy(),
+        constraints=PlannerConstraints(global_target_experts=2, min_experts_per_layer=2),
+        model_handle=ModelHandle(
+            model_id="google/gemma-4-27b",
+            revision="rev-123",
+            backend_name="gemma4",
+        ),
+    )
+
+    result = apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert plan.model_signature == "google/gemma-4-27b:rev-123"
+    assert result.layer_reports[0].keep_indices == (0, 1)
 
 
 def test_apply_prune_plan_reports_vector_router_scale_shape_in_audit(tmp_path: Path) -> None:
@@ -215,6 +304,32 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
     assert torch.equal(
         reloaded_source["model.language_model.layers.0.router.proj.weight"],
         source["model.language_model.layers.0.router.proj.weight"],
+    )
+
+
+def test_apply_prune_plan_materializes_from_sharded_checkpoint(tmp_path: Path) -> None:
+    source = _write_sharded_checkpoint(tmp_path)
+    output_dir = tmp_path / "derived-checkpoint"
+
+    result = apply_prune_plan(tmp_path, plan=_plan(), dry_run=False, output_dir=output_dir)
+
+    assert result.output_checkpoint_dir == str(output_dir.resolve())
+    assert (output_dir / "config.json").is_file()
+    assert (output_dir / "model.safetensors").is_file()
+    written = load_file(str(output_dir / "model.safetensors"))
+    keep = torch.tensor([3, 1], dtype=torch.long)
+
+    assert torch.equal(
+        written["model.language_model.layers.0.router.per_expert_scale"],
+        torch.index_select(source["model.language_model.layers.0.router.per_expert_scale"], 0, keep),
+    )
+    assert torch.equal(
+        written["model.language_model.layers.0.experts.down_proj"],
+        torch.index_select(source["model.language_model.layers.0.experts.down_proj"], 0, keep),
+    )
+    assert torch.equal(
+        written["model.embed_tokens.weight"],
+        source["model.embed_tokens.weight"],
     )
 
 
