@@ -116,16 +116,16 @@ def _scan_state(
     if isinstance(metadata_state, Mapping):
         return bundle, metadata_state, None
 
+    checkpoint = _resolve_local_checkpoint(bundle)
+    if checkpoint is not None:
+        prepared_bundle = _bundle_with_local_checkpoint_state(bundle, checkpoint)
+        return prepared_bundle, None, checkpoint
+
     state_dict = getattr(bundle.model, "state_dict", None)
     if callable(state_dict):
         loaded_state = state_dict()
         if isinstance(loaded_state, Mapping):
             return bundle, loaded_state, None
-
-    checkpoint = _resolve_local_checkpoint(bundle)
-    if checkpoint is not None:
-        prepared_bundle = _bundle_with_local_checkpoint_state(bundle, checkpoint)
-        return prepared_bundle, None, checkpoint
 
     if "state_keys" in bundle.metadata or bundle.model_handle.source_path is not None:
         raise TopologyMismatchError(
