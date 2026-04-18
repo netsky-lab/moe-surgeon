@@ -580,6 +580,7 @@ def _build_layer_reports(
             layer=layer,
             target_expert_count=len(item.keep_indices),
         )
+        router_scale_shape = _state_entry_shape(state_index[tensor_keys["router_scale"]])
 
         deltas = [
             ApplyTensorDelta(
@@ -613,8 +614,8 @@ def _build_layer_reports(
             ApplyTensorDelta(
                 tensor_key=tensor_keys["router_scale"],
                 tensor_role="router_scale",
-                source_shape=(),
-                target_shape=(),
+                source_shape=router_scale_shape,
+                target_shape=router_scale_shape,
                 rewritten=False,
             ),
         ]
@@ -686,6 +687,17 @@ def _remap_expert_tensor(
 ) -> torch.Tensor:
     index = torch.tensor(tuple(keep_indices), dtype=torch.long, device=tensor.device)
     return torch.index_select(tensor, 0, index).clone()
+
+
+def _state_entry_shape(entry: object) -> tuple[int, ...]:
+    if isinstance(entry, torch.Tensor):
+        return tuple(int(dim) for dim in entry.shape)
+    shape = getattr(entry, "shape", None)
+    if isinstance(shape, tuple):
+        return tuple(int(dim) for dim in shape)
+    if isinstance(shape, list):
+        return tuple(int(dim) for dim in shape)
+    raise TopologyMismatchError("prune apply state entry is missing shape metadata")
 
 
 def _derived_target_layer(layer: LayerTopology, *, target_expert_count: int) -> LayerTopology:

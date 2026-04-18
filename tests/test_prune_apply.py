@@ -140,6 +140,26 @@ def test_apply_prune_plan_dry_run_is_deterministic_and_reports_remap(tmp_path: P
     assert "model.embed_tokens.weight" in first.passthrough_tensor_keys
 
 
+def test_apply_prune_plan_reports_vector_router_scale_shape_in_audit(tmp_path: Path) -> None:
+    state_dict = _state_dict()
+    state_dict["model.language_model.layers.0.router.scale"] = torch.tensor(
+        [1.0, 2.0, 3.0],
+        dtype=torch.float32,
+    )
+    _write_checkpoint(tmp_path, state_dict=state_dict)
+
+    result = apply_prune_plan(tmp_path, plan=_plan(), dry_run=True)
+
+    router_scale_delta = next(
+        delta
+        for delta in result.layer_reports[0].tensor_deltas
+        if delta.tensor_role == "router_scale"
+    )
+    assert router_scale_delta.source_shape == (3,)
+    assert router_scale_delta.target_shape == (3,)
+    assert router_scale_delta.rewritten is False
+
+
 def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthrough(tmp_path: Path) -> None:
     source = _write_checkpoint(tmp_path)
     plan = _plan()
@@ -262,6 +282,44 @@ def test_apply_prune_plan_rejects_unknown_plan_layer(tmp_path: Path) -> None:
         apply_prune_plan(tmp_path, plan=_plan(layer_index=1), dry_run=True)
 
     assert "unknown_layer_indices=1" in str(exc_info.value)
+
+
+def test_apply_prune_plan_rejects_missing_plan_layer_coverage(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    plan.per_layer_plans = ()
+
+    with pytest.raises(TopologyMismatchError, match="missing MoE layer coverage") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "missing_layer_indices=0" in str(exc_info.value)
+
+
+def test_apply_prune_plan_rejects_plan_expert_count_mismatch(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    item = plan.per_layer_plans[0]
+    item.drop_indices = (0,)
+
+    with pytest.raises(TopologyMismatchError, match="expert count does not match layer topology") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "plan_expert_count=3" in str(exc_info.value)
+    assert "layer_expert_count=4" in str(exc_info.value)
+
+
+def test_apply_prune_plan_rejects_target_expert_count_below_top_k(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    item = plan.per_layer_plans[0]
+    item.keep_indices = (3,)
+    item.drop_indices = (0, 1, 2)
+
+    with pytest.raises(TopologyMismatchError, match="cannot be below layer top_k") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "target_expert_count=1" in str(exc_info.value)
+    assert "layer_top_k=2" in str(exc_info.value)
 
 
 def test_apply_prune_plan_rejects_missing_required_prune_tensor(tmp_path: Path) -> None:
