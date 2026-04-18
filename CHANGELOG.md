@@ -356,6 +356,13 @@
 - Expanded `tests/test_models_gemma4.py` with offline regressions for below-floor runtime failures, missing-symbol failures at the supported floor, and a packaging-floor consistency check against `pyproject.toml`.
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
+## 2026-04-19
+- Added `tests/test_docs_consistency.py` with a tracked-source layout harness
+  that locks the checked-in `src/moe_surgeon/` package/module tree to the
+  documented Python package names and file paths, including
+  `src/moe_surgeon/models/checkpoints.py`, as a stable base for later
+  README/architecture claim checks.
+
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
   tracked symlinks outside the `.tmp/` quarantine.
