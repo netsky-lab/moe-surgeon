@@ -73,11 +73,16 @@ class LocalSafetensorsCheckpoint:
 
         loaded: dict[str, torch.Tensor] = {}
         for shard_filename in sorted(shard_to_keys):
-            shard_path = _resolve_shard_path(self.checkpoint_dir, shard_filename)
+            requested_keys = tuple(sorted(shard_to_keys[shard_filename]))
+            shard_path = _resolve_shard_path(
+                self.checkpoint_dir,
+                shard_filename,
+                tensor_key=requested_keys[0],
+            )
             with safe_open(  # type: ignore[no-untyped-call,attr-defined]
                 str(shard_path), framework="pt", device="cpu"
             ) as handle:
-                for tensor_key in sorted(shard_to_keys[shard_filename]):
+                for tensor_key in requested_keys:
                     try:
                         loaded[tensor_key] = handle.get_tensor(tensor_key)
                     except Exception as exc:
@@ -267,7 +272,7 @@ def _load_index_weight_map(
                 tensor_key=tensor_key,
                 details={"checkpoint_path": str(checkpoint_dir), "file_path": str(index_path)},
             )
-        _resolve_shard_path(checkpoint_dir, shard_filename)
+        _resolve_shard_path(checkpoint_dir, shard_filename, tensor_key=tensor_key)
         weight_map[tensor_key] = shard_filename
 
     if not weight_map:
@@ -317,8 +322,12 @@ def _read_tensor_metadata(
 
     tensors: dict[str, CheckpointTensorMetadata] = {}
     for shard_filename in sorted(shard_to_keys):
-        shard_path = _resolve_shard_path(checkpoint_dir, shard_filename)
         expected_keys = tuple(sorted(shard_to_keys[shard_filename]))
+        shard_path = _resolve_shard_path(
+            checkpoint_dir,
+            shard_filename,
+            tensor_key=expected_keys[0],
+        )
         try:
             with safe_open(  # type: ignore[no-untyped-call,attr-defined]
                 str(shard_path), framework="pt", device="cpu"
@@ -355,13 +364,19 @@ def _read_tensor_metadata(
     return dict(sorted(tensors.items()))
 
 
-def _resolve_shard_path(checkpoint_dir: Path, shard_filename: str) -> Path:
+def _resolve_shard_path(
+    checkpoint_dir: Path,
+    shard_filename: str,
+    *,
+    tensor_key: str | None = None,
+) -> Path:
     root = checkpoint_dir.resolve()
     shard_path = Path(shard_filename)
     if shard_path.is_absolute():
         raise ShapeInvariantViolationError(
             "checkpoint index shard filename must be relative",
             model_id=str(root),
+            tensor_key=tensor_key,
             details={"checkpoint_path": str(root), "shard_filename": shard_filename},
         )
     resolved = (root / shard_path).resolve()
@@ -371,12 +386,14 @@ def _resolve_shard_path(checkpoint_dir: Path, shard_filename: str) -> Path:
         raise ShapeInvariantViolationError(
             "checkpoint index shard path escapes checkpoint directory",
             model_id=str(root),
+            tensor_key=tensor_key,
             details={"checkpoint_path": str(root), "shard_filename": shard_filename},
         ) from exc
     if not resolved.is_file():
         raise TopologyMismatchError(
             "checkpoint shard file is missing",
             model_id=str(root),
+            tensor_key=tensor_key,
             details={"checkpoint_path": str(root), "shard_filename": shard_filename},
         )
     return resolved

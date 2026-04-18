@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Threaded indexed tensor context through shard-path validation in
+  `src/moe_surgeon/models/checkpoints.py` so missing-shard and unsafe-path
+  diagnostics now include `tensor_key` during index probe, metadata reads, and
+  targeted `load_tensors()` calls, and expanded
+  `tests/test_models_checkpoints.py` with explicit tensor-context assertions
+  plus a post-open missing-shard regression for targeted loads.
 - Fixed the repo-scoped tempdir bootstrap in `src/moe_surgeon/test_env.py`
   so hostile-temp quality-gate subprocesses now materialize `.tmp/system`
   for both direct `python -m pytest` / `ruff` / `mypy` runs in minimal fixture

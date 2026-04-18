@@ -196,6 +196,7 @@ def test_checkpoint_probe_rejects_missing_shard_file(tmp_path: Path) -> None:
         open_local_safetensors_checkpoint(tmp_path)
 
     message = str(exc_info.value)
+    assert "tensor_key=model.language_model.layers.0.router.proj.weight" in message
     assert f"checkpoint_path={tmp_path.resolve()}" in message
     assert "shard_filename=model-00001-of-00002.safetensors" in message
 
@@ -211,6 +212,30 @@ def test_checkpoint_probe_rejects_missing_requested_tensor_name(tmp_path: Path) 
     message = str(exc_info.value)
     assert "tensor_key=missing.tensor" in message
     assert f"checkpoint_path={tmp_path.resolve()}" in message
+
+
+def test_checkpoint_load_rejects_missing_shard_file_with_tensor_context(tmp_path: Path) -> None:
+    _write_config(tmp_path)
+    shard_path = tmp_path / "model-00001-of-00001.safetensors"
+    save_file({"known.tensor": torch.ones((1,), dtype=torch.float32)}, str(shard_path))
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": 0},
+                "weight_map": {"known.tensor": "model-00001-of-00001.safetensors"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = open_local_safetensors_checkpoint(tmp_path)
+    shard_path.unlink()
+
+    with pytest.raises(TopologyMismatchError, match="checkpoint shard file is missing") as exc_info:
+        checkpoint.load_tensors(["known.tensor"])
+
+    message = str(exc_info.value)
+    assert "tensor_key=known.tensor" in message
+    assert "shard_filename=model-00001-of-00001.safetensors" in message
 
 
 def test_checkpoint_probe_rejects_duplicate_tensor_mappings_in_index(tmp_path: Path) -> None:
@@ -273,7 +298,9 @@ def test_checkpoint_probe_rejects_absolute_shard_paths(tmp_path: Path) -> None:
     ) as exc_info:
         open_local_safetensors_checkpoint(tmp_path)
 
-    assert f"checkpoint_path={tmp_path.resolve()}" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "tensor_key=known.tensor" in message
+    assert f"checkpoint_path={tmp_path.resolve()}" in message
 
 
 def test_checkpoint_probe_rejects_escaping_shard_paths(tmp_path: Path) -> None:
@@ -298,7 +325,9 @@ def test_checkpoint_probe_rejects_escaping_shard_paths(tmp_path: Path) -> None:
     ) as exc_info:
         open_local_safetensors_checkpoint(tmp_path)
 
-    assert "shard_filename=../outside/escaped.safetensors" in str(exc_info.value)
+    message = str(exc_info.value)
+    assert "tensor_key=known.tensor" in message
+    assert "shard_filename=../outside/escaped.safetensors" in message
 
 
 def test_checkpoint_probe_rejects_indexed_keys_missing_from_existing_shard(tmp_path: Path) -> None:
