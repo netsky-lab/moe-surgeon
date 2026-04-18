@@ -158,5 +158,13 @@
       "move-live-gemma4-coverage-behind-explicit-integration-selection"
     ],
     "timestamp": "2026-04-17T17:06:16.322Z"
+  },
+  {
+    "taskTitle": "Add a regression for indexed keys missing from an existing shard",
+    "summary": "Reconciled the task ledger after verifying the regression was already implemented in the root checkout. The repository verification path also passes via python -m moe_surgeon.repo_metrics --check tests.",
+    "tags": [
+      "add-a-regression-for-indexed-keys-missing-from-an-existing-shard"
+    ],
+    "timestamp": "2026-04-18T15:52:00.000Z"
   }
 ]

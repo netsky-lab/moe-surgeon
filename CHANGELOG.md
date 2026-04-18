@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reconciled the task ledger for the already-merged checkpoint-reader
+  regression covering indexed keys that point to an existing shard file whose
+  payload omits the indexed tensor; the regression remains in
+  `tests/test_models_checkpoints.py` and the root quality gate passes.
 - Hardened `src/moe_surgeon/repo_metrics.py` so missing repo-local
   `.supervisor/project.json` files now fail with a clean
   `MetricsConfigurationError` message instead of leaking a raw
