@@ -4,7 +4,10 @@ PACKAGE_NAME = "moe-surgeon"
 PACKAGE_DESCRIPTION = "Python CLI for analyzing and pruning MoE models"
 PACKAGE_LAYOUT = {
     "cli": "command graph and orchestration",
-    "models": "backend adapters, lightweight checkpoint readers, and topology/contracts",
+    "models": (
+        "backend adapters, the offline safetensors checkpoint reader in "
+        "src/moe_surgeon/models/checkpoints.py, and topology/contracts"
+    ),
     "analysis": "static router analysis",
     "runtime": "forward hook profiler",
     "prune": "strategy and plan generation (selection only)",

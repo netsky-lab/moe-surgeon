@@ -179,10 +179,19 @@ def test_checkpoint_architecture_claim_tracks_reader_file_presence() -> None:
 
 def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role() -> None:
     inventory = _tracked_source_inventory()
+    claims = _architecture_claims()
+    expected_models_description = (
+        "backend adapters, the offline safetensors checkpoint reader in "
+        "src/moe_surgeon/models/checkpoints.py, and topology/contracts"
+    )
 
     assert "moe_surgeon/models" in inventory.package_dirs
     assert "moe_surgeon/models/checkpoints.py" in inventory.module_files
     assert PACKAGE_LAYOUT["models"] == MODELS_PACKAGE_DESCRIPTION
-    assert MODELS_PACKAGE_DESCRIPTION == (
-        "backend adapters, lightweight checkpoint readers, and topology/contracts"
-    )
+    assert MODELS_PACKAGE_DESCRIPTION == expected_models_description
+    assert "src/moe_surgeon/models/checkpoints.py" in MODELS_PACKAGE_DESCRIPTION
+    assert "offline safetensors checkpoint reader" in MODELS_PACKAGE_DESCRIPTION
+    assert "src/moe_surgeon/models/checkpoints.py" in claims.text
+    assert "offline-local `safetensors` checkpoint introspection" in claims.text
+    assert "deterministic `state_keys` and targeted tensor reads" in claims.text
+    assert "without importing `transformers` or loading a full model" in claims.text

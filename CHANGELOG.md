@@ -362,6 +362,14 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-19
+- Aligned `src/moe_surgeon/__init__.py` and
+  `src/moe_surgeon/models/__init__.py` so the checked-in package descriptions
+  explicitly name `src/moe_surgeon/models/checkpoints.py` as the offline
+  safetensors checkpoint reader within the models package role split.
+- Extended `tests/test_docs_consistency.py` so the package-description checks
+  now lock that source-level models description to the tracked
+  `models/checkpoints.py` path and the architecture-documented offline
+  checkpoint-reader contract.
 - Tightened the README module-structure claim so `models/` explicitly documents
   `src/moe_surgeon/models/checkpoints.py` as a checked-in implementation file
   within the lightweight checkpoint-reader surface.
