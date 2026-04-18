@@ -9,6 +9,7 @@ import pytest
 from safetensors.torch import load_file, save_file
 import torch
 
+from moe_surgeon.models.checkpoints import open_local_safetensors_checkpoint
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
@@ -129,6 +130,26 @@ def _plan(*, layer_index: int = 0) -> PrunePlan:
                 drop_indices=(0, 2),
                 source_expert_count=4,
                 target_expert_count=2,
+                expected_expert_count=4,
+            ),
+        ),
+        model_handle=ModelHandle(model_id="google/gemma-4-27b", revision="rev-123", backend_name="gemma4"),
+    )
+
+
+def _identity_plan(*, layer_index: int = 0) -> PrunePlan:
+    return PrunePlan(
+        plan_id="plan-prune-identity",
+        model_signature="google/gemma-4-27b:rev-123",
+        strategy_name="frequency",
+        strategy_version="1",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=layer_index,
+                keep_indices=(0, 1, 2, 3),
+                drop_indices=(),
+                source_expert_count=4,
+                target_expert_count=4,
                 expected_expert_count=4,
             ),
         ),
@@ -314,6 +335,57 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
     assert torch.equal(
         reloaded_source["model.language_model.layers.0.router.proj.weight"],
         source["model.language_model.layers.0.router.proj.weight"],
+    )
+
+    reopened = open_local_safetensors_checkpoint(output_dir)
+
+    assert reopened.model_id == "google/gemma-4-27b"
+    assert reopened.revision == "rev-123"
+    assert reopened.state_keys() == tuple(sorted(derived))
+    reopened_metadata = {item.tensor_key: item for item in reopened.tensor_metadata()}
+    assert reopened_metadata["model.language_model.layers.0.router.proj.weight"].shape == (2, 3)
+    assert reopened_metadata["model.language_model.layers.0.router.per_expert_scale"].shape == (2,)
+    assert reopened_metadata["model.language_model.layers.0.experts.gate_up_proj"].shape == (2, 4, 3)
+    assert reopened_metadata["model.language_model.layers.0.experts.down_proj"].shape == (2, 3, 2)
+    assert reopened_metadata["model.language_model.layers.0.router.scale"].shape == ()
+    assert reopened_metadata["model.embed_tokens.weight"].shape == (4, 3)
+
+
+def test_apply_prune_plan_identity_plan_preserves_rewritten_and_passthrough_tensors(tmp_path: Path) -> None:
+    source = _write_checkpoint(tmp_path)
+    output_dir = tmp_path / "derived-checkpoint"
+
+    result = apply_prune_plan(tmp_path, plan=_identity_plan(), dry_run=False, output_dir=output_dir)
+
+    assert result.derived_state_dict is not None
+    assert result.layer_reports[0].keep_indices == (0, 1, 2, 3)
+    assert result.layer_reports[0].drop_indices == ()
+    assert result.layer_reports[0].old_to_new_index == ((0, 0), (1, 1), (2, 2), (3, 3))
+
+    written = load_file(str(output_dir / "model.safetensors"))
+    identity_keys = (
+        "model.language_model.layers.0.router.proj.weight",
+        "model.language_model.layers.0.router.per_expert_scale",
+        "model.language_model.layers.0.experts.gate_up_proj",
+        "model.language_model.layers.0.experts.down_proj",
+        "model.language_model.layers.0.router.scale",
+        "model.embed_tokens.weight",
+    )
+    for tensor_key in identity_keys:
+        assert torch.equal(written[tensor_key], source[tensor_key])
+        assert torch.equal(result.derived_state_dict[tensor_key], source[tensor_key])
+
+    reopened_source = open_local_safetensors_checkpoint(tmp_path)
+    reopened_output = open_local_safetensors_checkpoint(output_dir)
+
+    assert reopened_output.state_keys() == reopened_source.state_keys()
+    assert reopened_output.weight_map == reopened_source.weight_map
+    assert tuple(
+        (item.tensor_key, item.shape, item.dtype, item.shard_filename)
+        for item in reopened_output.tensor_metadata()
+    ) == tuple(
+        (item.tensor_key, item.shape, item.dtype, item.shard_filename)
+        for item in reopened_source.tensor_metadata()
     )
 
 
