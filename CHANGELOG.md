@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Audited the recently reconciled supervisor/task ledger entries so checkpoint
+  reader delivery now stays attributed to `99534567` (`feat: restore local
+  safetensors checkpoint reader`), targeted static-scan router-only reads stay
+  attributed to `e4ce49a9` (`feat: use checkpoint reader for static scan`),
+  and the repo tempdir/bootstrap fixes in `src/moe_surgeon/test_env.py` remain
+  recorded as quality-gate hardening rather than checkpoint-reader delivery.
 - Broadened `.gitignore` coverage for repo-managed temp outputs from the
   pytest-only path to all repo-local `.tmp/*` families while preserving the
   tracked `.tmp/.gitkeep` sentinel, so direct and metrics-driven quality-gate

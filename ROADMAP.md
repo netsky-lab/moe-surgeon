@@ -81,3 +81,16 @@ Acceptance criteria: validation-error branches are tested for each domain error;
 - Planning (complete when P7 done): deterministic strategy and plan outputs done.
 - Prune + Export (complete when P8-P10 done): end-to-end prunable/exportable workflow done.
 - Hardening (complete when P11 done): test-backed, documented baseline ready.
+
+## Implementation audit notes
+
+- The lightweight local safetensors checkpoint reader was delivered in
+  `99534567` (`src/moe_surgeon/models/checkpoints.py`,
+  `tests/test_models_checkpoints.py`).
+- Static scan's targeted router-only checkpoint reads were delivered in
+  `e4ce49a9` (`src/moe_surgeon/analysis/scan.py`,
+  `tests/test_analysis_scan.py`) on top of that reader.
+- Repo tempdir/bootstrap fixes in `src/moe_surgeon/test_env.py` and
+  `tests/test_repo_metrics.py` are quality-gate/test-environment hardening and
+  should not be used as completion evidence for the checkpoint-reader or
+  targeted static-scan backlog items.
