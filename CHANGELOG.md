@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Restored the tracked local safetensors checkpoint reader in
+  `src/moe_surgeon/models/checkpoints.py` and restored
+  `tests/test_models_checkpoints.py` in this worktree.
+- Added a checkpoint-reader regression covering an indexed tensor key that
+  points to an existing shard file but is absent from that shard payload,
+  asserting the domain error includes checkpoint path, shard filename, and
+  tensor key context.
 - Moved the live Gemma4 router-contract coverage in
   `tests/test_runtime_profiler.py` behind a registered `integration` marker,
   updated `pyproject.toml` so plain `python -m pytest` deselects integration
