@@ -250,6 +250,16 @@
 - Added scan regressions in `tests/test_analysis_scan.py` covering both the
   new local-checkpoint reader path and the fail-fast diagnostic when scan has
   neither materialized tensors nor a readable local safetensors checkpoint.
+- Hardened `src/moe_surgeon/test_env.py` so repo-started Python processes
+  prepend the current checkout's `src/` tree to `sys.path` and `PYTHONPATH`,
+  preventing stale editable installs from another worktree from masking local
+  code during direct `python -m pytest` and repo-metrics runs.
+- Added a repo-root `sitecustomize.py` shim so Python processes started from
+  this checkout bootstrap the current worktree before any stale installed
+  `sitecustomize` module from another editable install can intercept imports.
+- Added a subprocess regression in `tests/test_repo_metrics.py` asserting a
+  Python process started from this repo imports `moe_surgeon.analysis.scan`
+  from the current checkout's `src/` tree.
 
 ## 2026-04-17
 - Made the direct quality gates hermetic across tempdir- and

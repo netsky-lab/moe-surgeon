@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import sys
 from typing import MutableMapping
 
 
@@ -54,6 +55,7 @@ def apply_quality_gate_env(
     """Apply repo-local tempdir and cache defaults for quality-gate subprocesses."""
 
     target_env = os.environ if env is None else env
+    ensure_repo_src_import_path(root_path, env=target_env)
     target_env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     target_env.setdefault("RUFF_NO_CACHE", "true")
     target_env.setdefault("MYPY_CACHE_DIR", os.devnull)
@@ -68,6 +70,32 @@ def apply_quality_gate_env(
         for key in TEMP_ENV_KEYS:
             target_env[key] = repo_temp
 
+    return target_env
+
+
+def ensure_repo_src_import_path(
+    root_path: Path,
+    *,
+    env: MutableMapping[str, str] | None = None,
+) -> MutableMapping[str, str]:
+    """Prefer the current checkout's ``src/`` tree over stale editable installs."""
+
+    src_path = str((root_path / "src").resolve())
+    if src_path not in sys.path:
+        sys.path.insert(0, src_path)
+
+    target_env = os.environ if env is None else env
+    python_path = target_env.get("PYTHONPATH")
+    if not python_path:
+        target_env["PYTHONPATH"] = src_path
+        return target_env
+
+    entries = [entry for entry in python_path.split(os.pathsep) if entry]
+    if src_path in entries:
+        entries = [src_path, *[entry for entry in entries if entry != src_path]]
+    else:
+        entries.insert(0, src_path)
+    target_env["PYTHONPATH"] = os.pathsep.join(entries)
     return target_env
 
 
