@@ -1,18 +1,10 @@
 {
-  "repoMetricsConfig": {
-    "browserTestCommand": null,
-    "buildCommand": null,
-    "coverageCommand": null,
-    "lintCommand": "/usr/bin/python -c \"print('lint-ok')\"",
-    "testCommand": "/usr/bin/python -c \"print('tests-ok')\"",
-    "typeCheckCommand": "/usr/bin/python -c \"print('typecheck-ok')\""
-  },
   "verifyConfig": {
     "browserTestCommand": null,
     "buildCommand": null,
     "coverageCommand": null,
-    "lintCommand": "/usr/bin/python -m moe_surgeon.repo_metrics --check lint",
-    "testCommand": "/usr/bin/python -m moe_surgeon.repo_metrics --check tests",
-    "typeCheckCommand": "/usr/bin/python -m moe_surgeon.repo_metrics --check typecheck"
+    "lintCommand": "/usr/bin/python -c \"print('lint via repo file')\"",
+    "testCommand": "/usr/bin/python -c \"print('tests via repo file')\"",
+    "typeCheckCommand": "/usr/bin/python -c \"print('typecheck via repo file')\""
   }
 }
