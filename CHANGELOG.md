@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Closed the residual P4 static-scan targeted-read task using existing
+  checkpoint-reader integration evidence from `e4ce49a9` after re-verifying
+  that `src/moe_surgeon/analysis/scan.py` now treats explicit
+  `bundle.metadata["state_dict"]` as the only higher-priority numeric source
+  and otherwise prefers the shared local safetensors reader over
+  `bundle.model.state_dict()` for router-only checkpoint analysis.
 - Hardened repo-local startup bootstrapping in `sitecustomize.py` and
   `src/moe_surgeon/test_env.py` so Python processes launched from this checkout
   keep the current worktree `src/` on the import path without overriding
