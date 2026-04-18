@@ -1,2 +1,0 @@
-{"timestamp":"2026-04-17T15:41:21.977Z","phase":"execution","level":"info","message":"Phase started: execution — Make direct quality gates hermetic across tempdir and cache-constrained environments"}
-{"timestamp":"2026-04-17T16:16:33.281Z","phase":"execution","level":"info","message":"Phase ended: execution (success) — Metrics: 2/3 passed"}
