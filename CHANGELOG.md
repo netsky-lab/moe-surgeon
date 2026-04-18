@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fixed the repo-root `sitecustomize.py` bootstrap ordering so the current
+  checkout's `src/` path is inserted into `sys.path` before any chained
+  `PYTHONPATH` `sitecustomize.py` runs, preventing stale editable installs
+  from another worktree from winning imports during repo-local quality gates.
+- Updated `src/moe_surgeon/test_env.py` so repo-managed subprocess environments
+  rewrite `PYTHONPATH` to put the active checkout's `src/` first while keeping
+  the remaining caller-provided entries in order, ensuring child processes
+  launched from this repo resolve local modules ahead of stale worktree
+  installs.
+- Added a subprocess regression in `tests/test_repo_metrics.py` covering the
+  stale-`PYTHONPATH` bootstrap case where a competing checkout exposes its own
+  `sitecustomize.py`; repo-started Python processes now still resolve
+  `moe_surgeon.analysis.scan` from the active worktree.
 - Audited the recently reconciled supervisor/task ledger entries so checkpoint
   reader delivery now stays attributed to `99534567` (`feat: restore local
   safetensors checkpoint reader`), targeted static-scan router-only reads stay

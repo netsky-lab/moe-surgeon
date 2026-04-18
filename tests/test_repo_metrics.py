@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from moe_surgeon import repo_metrics
+from moe_surgeon.test_env import ensure_repo_src_import_path
 
 
 def _load_supervisor_verify_config() -> dict[str, str | None]:
@@ -373,6 +374,51 @@ def test_repo_python_process_imports_moe_surgeon_from_current_checkout_src() -> 
             "import moe_surgeon.analysis.scan as scan; "
             "print(Path(scan.__file__).resolve())"
         )
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    imported_path = Path(result.stdout.strip())
+    assert imported_path == (repo_root / "src" / "moe_surgeon" / "analysis" / "scan.py").resolve()
+
+
+def test_repo_python_process_prefers_current_checkout_when_pythonpath_has_stale_sitecustomize(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    stale_src = tmp_path / "stale-src"
+    stale_package = stale_src / "moe_surgeon" / "analysis"
+    stale_package.mkdir(parents=True)
+    (stale_src / "sitecustomize.py").write_text(
+        "import moe_surgeon.analysis.scan\n",
+        encoding="utf-8",
+    )
+    (stale_src / "moe_surgeon" / "__init__.py").write_text("", encoding="utf-8")
+    (stale_src / "moe_surgeon" / "analysis" / "__init__.py").write_text("", encoding="utf-8")
+    (stale_package / "scan.py").write_text(
+        "STALE_SCAN = True\n",
+        encoding="utf-8",
+    )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(stale_src), str((repo_root / "src").resolve())]
+    )
+    ensure_repo_src_import_path(repo_root, env=env)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from pathlib import Path; "
+                "import moe_surgeon.analysis.scan as scan; "
+                "print(Path(scan.__file__).resolve())"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        env=env,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout

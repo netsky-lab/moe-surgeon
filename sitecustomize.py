@@ -31,9 +31,9 @@ def _chain_pythonpath_sitecustomize() -> None:
         return
 
 
-_chain_pythonpath_sitecustomize()
 if _SRC_PATH not in sys.path:
     sys.path.insert(0, _SRC_PATH)
+_chain_pythonpath_sitecustomize()
 
 from moe_surgeon.test_env import bootstrap_repo_quality_gate_env
 
