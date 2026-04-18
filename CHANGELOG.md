@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Added `src/moe_surgeon/prune/apply.py` with a deterministic Gemma4 prune/apply
+  engine that validates full MoE-layer plan coverage, computes old-to-new
+  expert remaps, slices `experts.gate_up_proj`, `experts.down_proj`,
+  `router.proj.weight`, and `router.per_expert_scale` along the expert axis,
+  preserves non-MoE tensors as explicit passthrough inventory, and emits
+  stable dry-run/apply audit payloads with post-remap backend validation.
+- Exported the public prune/apply surface from `src/moe_surgeon/prune/__init__.py`
+  and added offline regression coverage in `tests/test_prune_apply.py` for the
+  required import path, deterministic dry-runs, remap correctness, pass-through
+  preservation, and plan/topology invariant failures.
+- Exposed backend-owned Gemma4 prune tensor helpers in
+  `src/moe_surgeon/models/gemma4.py` so apply code can resolve the exact MoE
+  rewrite keys and validate expected target shapes without duplicating private
+  `moe_intermediate_size` layout rules.
 - Reconciled the task ledger for the already-merged checkpoint-reader
   regression covering indexed keys that point to an existing shard file whose
   payload omits the indexed tensor; the regression remains in

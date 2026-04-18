@@ -369,6 +369,7 @@ def write_scan_artifact(path: str | Path, result: StaticScanResult, *, compact: 
     """Write a canonical static scan artifact and return the output path."""
 
     target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(scan_result_json(result, compact=compact), encoding="utf-8")
     return target
 
