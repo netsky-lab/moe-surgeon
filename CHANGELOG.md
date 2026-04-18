@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Tightened the `ARCHITECTURE.md` checkpoint-reader claim so it now names the
+  exact `src/moe_surgeon/models/checkpoints.py` path and the lightweight role
+  wording checked by `tests/test_docs_consistency.py`, including offline
+  `safetensors` introspection without importing `transformers` or loading a
+  full model.
 - Audited the recently reconciled supervisor/task ledger entries so checkpoint
   reader delivery now stays attributed to `99534567` (`feat: restore local
   safetensors checkpoint reader`), targeted static-scan router-only reads stay

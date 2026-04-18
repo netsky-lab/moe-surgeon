@@ -61,10 +61,10 @@ Gemma 4 discovery is config-first: lightweight signatures route to the backend
 without importing ML runtimes, then runtime loading performs explicit
 Transformers capability checks before attempting model construction.
 
-The `models/checkpoints.py` helper provides offline-local `safetensors`
-checkpoint introspection for single-file and indexed sharded layouts, exposing
-deterministic `state_keys` and targeted tensor reads without importing
-`transformers` or materializing a full model.
+The `src/moe_surgeon/models/checkpoints.py` helper provides offline-local
+`safetensors` checkpoint introspection for single-file and indexed sharded
+layouts, exposing deterministic `state_keys` and targeted tensor reads without
+importing `transformers` or loading a full model.
 Static scan consumes that same reader for local-checkpoint analysis: topology
 discovery is driven from checkpoint key metadata and per-layer router metrics
 load only the router tensors required for scoring.

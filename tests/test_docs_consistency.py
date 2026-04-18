@@ -170,11 +170,11 @@ def test_checkpoint_architecture_claim_tracks_reader_file_presence() -> None:
     claims = _architecture_claims()
 
     assert "moe_surgeon/models/checkpoints.py" in inventory.module_files
-    assert "checkpoints.py" in claims.text
+    assert "src/moe_surgeon/models/checkpoints.py" in claims.text
     assert "offline-local `safetensors` checkpoint introspection" in claims.text
     assert "single-file and indexed sharded layouts" in claims.text
     assert "deterministic `state_keys` and targeted tensor reads" in claims.text
-    assert "without importing `transformers` or materializing a full model" in claims.text
+    assert "without importing `transformers` or loading a full model" in claims.text
 
 
 def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role() -> None:
