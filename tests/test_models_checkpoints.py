@@ -238,6 +238,36 @@ def test_checkpoint_load_rejects_missing_shard_file_with_tensor_context(tmp_path
     assert "shard_filename=model-00001-of-00001.safetensors" in message
 
 
+def test_checkpoint_load_rejects_indexed_tensor_missing_from_shard_payload_after_open(
+    tmp_path: Path,
+) -> None:
+    _write_config(tmp_path)
+    shard_path = tmp_path / "model-00001-of-00001.safetensors"
+    save_file({"known.tensor": torch.ones((1,), dtype=torch.float32)}, str(shard_path))
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": 0},
+                "weight_map": {"known.tensor": "model-00001-of-00001.safetensors"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = open_local_safetensors_checkpoint(tmp_path)
+    save_file({"other.tensor": torch.zeros((1,), dtype=torch.float32)}, str(shard_path))
+
+    with pytest.raises(
+        TopologyMismatchError,
+        match="checkpoint shard is missing indexed tensor payload",
+    ) as exc_info:
+        checkpoint.load_tensors(["known.tensor"])
+
+    message = str(exc_info.value)
+    assert "tensor_key=known.tensor" in message
+    assert f"checkpoint_path={tmp_path.resolve()}" in message
+    assert "shard_filename=model-00001-of-00001.safetensors" in message
+
+
 def test_checkpoint_probe_rejects_duplicate_tensor_mappings_in_index(tmp_path: Path) -> None:
     _write_config(tmp_path)
     save_file({"known.tensor": torch.ones((1,), dtype=torch.float32)}, str(tmp_path / "model-00001-of-00001.safetensors"))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 
@@ -407,6 +408,67 @@ def test_scan_model_prefers_local_checkpoint_reader_over_callable_state_dict(
             "model.language_model.layers.0.router.scale",
         )
     ]
+
+
+def test_scan_model_preserves_checkpoint_payload_loss_diagnostic_from_local_reader(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    (tmp_path / "config.json").write_text(
+        '{"_name_or_path": "google/gemma-4-27b", "_commit_hash": "rev-123", '
+        '"architectures": ["Gemma4ForConditionalGeneration"], "model_type": "gemma4", '
+        '"text_config": {"num_hidden_layers": 4, "hidden_size": 3, "enable_moe_block": true, '
+        '"num_experts": 4, "top_k_experts": 2, "moe_intermediate_size": 2, "moe_layer_indices": [0]}}',
+        encoding="utf-8",
+    )
+    shard_path = tmp_path / "model-00001-of-00001.safetensors"
+    save_file(_layer_state(0, shift=0.0), str(shard_path))
+    (tmp_path / "model.safetensors.index.json").write_text(
+        json.dumps(
+            {
+                "metadata": {"total_size": 0},
+                "weight_map": {
+                    key: "model-00001-of-00001.safetensors"
+                    for key in _layer_state(0, shift=0.0)
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    checkpoint = open_local_safetensors_checkpoint(tmp_path)
+
+    class _CheckpointSpy:
+        def __init__(self) -> None:
+            self._rewrote_payload = False
+
+        def state_keys(self) -> tuple[str, ...]:
+            return checkpoint.state_keys()
+
+        def tensor_metadata(self, tensor_names: tuple[str, ...] | None = None) -> object:
+            metadata = checkpoint.tensor_metadata(tensor_names)
+            if not self._rewrote_payload:
+                save_file({"other.tensor": torch.zeros((1,), dtype=torch.float32)}, str(shard_path))
+                self._rewrote_payload = True
+            return metadata
+
+        def load_tensors(self, tensor_names: list[str]) -> dict[str, torch.Tensor]:
+            return checkpoint.load_tensors(tensor_names)
+
+    monkeypatch.setattr("moe_surgeon.analysis.scan.open_local_safetensors_checkpoint", lambda path: _CheckpointSpy())
+    bundle = _bundle(config=config, source_path=str(tmp_path.resolve()))
+
+    with pytest.raises(
+        TopologyMismatchError,
+        match="checkpoint shard is missing indexed tensor payload",
+    ) as exc_info:
+        scan_model(bundle, backend=backend)
+
+    message = str(exc_info.value)
+    assert "tensor_key=model.language_model.layers.0.router.per_expert_scale" in message
+    assert f"checkpoint_path={tmp_path.resolve()}" in message
+    assert "shard_filename=model-00001-of-00001.safetensors" in message
 
 
 def test_require_tensor_rejects_missing_materialized_router_tensor_payload() -> None:
