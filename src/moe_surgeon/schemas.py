@@ -404,7 +404,6 @@ class ModelHandle(_SchemaBase):
             "model_id": self.model_id,
             "revision": self.revision,
             "backend_name": self.backend_name,
-            "source_path": self.source_path,
             "tokenizer_id": self.tokenizer_id,
             "framework_version": self.framework_version,
             "device": self.device,

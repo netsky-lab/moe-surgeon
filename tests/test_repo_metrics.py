@@ -425,6 +425,15 @@ def test_repo_metrics_collector_single_check_fails_when_missing(
     assert f"Requested check '{check_name}' is not configured" in result.stderr
 
 
+def test_repo_metrics_reports_missing_project_json_cleanly(tmp_path: Path) -> None:
+    result = _run_repo_metrics(tmp_path, "--check", "typecheck")
+
+    assert result.returncode != 0
+    assert result.stdout == ""
+    assert "Missing .supervisor/project.json" in result.stderr
+    assert "FileNotFoundError" not in result.stderr
+
+
 def test_repo_metrics_runs_configured_lint_check(tmp_path: Path) -> None:
     _write_project_json(tmp_path)
 

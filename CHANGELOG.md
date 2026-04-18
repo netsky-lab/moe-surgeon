@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Hardened `src/moe_surgeon/repo_metrics.py` so missing repo-local
+  `.supervisor/project.json` files now fail with a clean
+  `MetricsConfigurationError` message instead of leaking a raw
+  `FileNotFoundError` traceback through the collector CLI.
+- Made `ModelHandle.model_fingerprint` location-independent by excluding
+  `source_path`, so downstream deterministic IDs derived from logical model
+  content no longer change when the same checkpoint is opened from a different
+  local path.
 - Updated `README.md` and `ARCHITECTURE.md` so the documented `models/`
   package and module responsibilities now explicitly include the tracked local
   safetensors checkpoint reader in `src/moe_surgeon/models/checkpoints.py`.

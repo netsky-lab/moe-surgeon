@@ -183,6 +183,26 @@ def test_model_and_activation_objects_validate_bounds() -> None:
     assert len(sorted_candidates) == 2
 
 
+def test_model_fingerprint_ignores_source_path_location_entropy() -> None:
+    base = dict(
+        model_id="test",
+        revision="rev-1",
+        backend_name="gemma4",
+        tokenizer_id="tokenizer",
+        framework_version="5.5.4",
+        device="cpu",
+        dtype="float32",
+        seed=7,
+        git_hash="abc123",
+        metadata={"schema": "1"},
+    )
+
+    local_handle = ModelHandle(**base, source_path="/tmp/a")
+    relocated_handle = ModelHandle(**base, source_path="/tmp/b")
+
+    assert local_handle.model_fingerprint == relocated_handle.model_fingerprint
+
+
 def test_sort_activation_stats_is_deterministic_by_layer_and_expert() -> None:
     ordered = sort_activation_stats(
         [

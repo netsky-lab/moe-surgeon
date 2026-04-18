@@ -67,7 +67,12 @@ def load_verify_config(root_path: Path) -> VerifyConfig:
     """Load repo metrics commands from the repo-local project config."""
 
     config_path = root_path / ".supervisor" / "project.json"
-    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise MetricsConfigurationError(
+            f"Missing .supervisor/project.json at {config_path}"
+        ) from exc
     metrics_config = payload.get("repoMetricsConfig", payload.get("verifyConfig"))
     if not isinstance(metrics_config, dict):
         raise MetricsConfigurationError(
