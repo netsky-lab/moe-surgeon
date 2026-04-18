@@ -18,6 +18,18 @@
   `.supervisor/*` artifacts, plus a direct repo-index assertion that
   `.supervisor/logs` no longer contains tracked files while `.tmp/.gitkeep`
   remains the only tracked `.tmp` sentinel.
+- Closed the residual P4 static-scan targeted-read task using existing
+  checkpoint-reader integration evidence from `e4ce49a9` after re-verifying
+  that `src/moe_surgeon/analysis/scan.py` now treats explicit
+  `bundle.metadata["state_dict"]` as the only higher-priority numeric source
+  and otherwise prefers the shared local safetensors reader over
+  `bundle.model.state_dict()` for router-only checkpoint analysis.
+- Hardened repo-local startup bootstrapping in `sitecustomize.py` and
+  `src/moe_surgeon/test_env.py` so Python processes launched from this checkout
+  keep the current worktree `src/` on the import path without overriding
+  explicit caller-provided `PYTHONPATH` entries, and repo-root startup now
+  chains to any `PYTHONPATH`-provided `sitecustomize.py` used by subprocess
+  import probes.
 - Reconciled the task ledger for the already-merged checkpoint-reader
   regression covering indexed keys that point to an existing shard file whose
   payload omits the indexed tensor; the regression remains in
@@ -266,6 +278,16 @@
 - Added scan regressions in `tests/test_analysis_scan.py` covering both the
   new local-checkpoint reader path and the fail-fast diagnostic when scan has
   neither materialized tensors nor a readable local safetensors checkpoint.
+- Hardened `src/moe_surgeon/test_env.py` so repo-started Python processes
+  prepend the current checkout's `src/` tree to `sys.path` and `PYTHONPATH`,
+  preventing stale editable installs from another worktree from masking local
+  code during direct `python -m pytest` and repo-metrics runs.
+- Added a repo-root `sitecustomize.py` shim so Python processes started from
+  this checkout bootstrap the current worktree before any stale installed
+  `sitecustomize` module from another editable install can intercept imports.
+- Added a subprocess regression in `tests/test_repo_metrics.py` asserting a
+  Python process started from this repo imports `moe_surgeon.analysis.scan`
+  from the current checkout's `src/` tree.
 
 ## 2026-04-17
 - Made the direct quality gates hermetic across tempdir- and

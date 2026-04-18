@@ -335,6 +335,80 @@ def test_scan_model_reads_router_tensors_via_local_checkpoint_reader(
     ]
 
 
+def test_scan_model_prefers_local_checkpoint_reader_over_callable_state_dict(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    (tmp_path / "config.json").write_text(
+        '{"_name_or_path": "google/gemma-4-27b", "_commit_hash": "rev-123", '
+        '"architectures": ["Gemma4ForConditionalGeneration"], "model_type": "gemma4", '
+        '"text_config": {"num_hidden_layers": 4, "hidden_size": 3, "enable_moe_block": true, '
+        '"num_experts": 4, "top_k_experts": 2, "moe_intermediate_size": 2, "moe_layer_indices": [0]}}',
+        encoding="utf-8",
+    )
+    save_file(_layer_state(0, shift=0.0), str(tmp_path / "model.safetensors"))
+    checkpoint = open_local_safetensors_checkpoint(tmp_path)
+
+    class _CheckpointSpy:
+        def __init__(self) -> None:
+            self.state_keys_calls = 0
+            self.tensor_metadata_calls: list[tuple[str, ...] | None] = []
+            self.load_tensors_calls: list[tuple[str, ...]] = []
+
+        def state_keys(self) -> tuple[str, ...]:
+            self.state_keys_calls += 1
+            return checkpoint.state_keys()
+
+        def tensor_metadata(self, tensor_names: tuple[str, ...] | None = None) -> object:
+            self.tensor_metadata_calls.append(tensor_names)
+            return checkpoint.tensor_metadata(tensor_names)
+
+        def load_tensors(self, tensor_names: list[str]) -> dict[str, torch.Tensor]:
+            requested = tuple(sorted(tensor_names))
+            self.load_tensors_calls.append(requested)
+            return checkpoint.load_tensors(tensor_names)
+
+    class _LoadedModel:
+        def __init__(self) -> None:
+            self.state_dict_calls = 0
+
+        def state_dict(self) -> dict[str, torch.Tensor]:
+            self.state_dict_calls += 1
+            raise AssertionError("scan should not materialize the full model state_dict for local checkpoints")
+
+    spy = _CheckpointSpy()
+    model = _LoadedModel()
+    monkeypatch.setattr("moe_surgeon.analysis.scan.open_local_safetensors_checkpoint", lambda path: spy)
+    bundle = LoadedBackendBundle(
+        backend_name="gemma4",
+        model_handle=ModelHandle(
+            model_id="google/gemma-4-27b",
+            revision="rev-123",
+            backend_name="gemma4",
+            source_path=str(tmp_path.resolve()),
+        ),
+        model=model,
+        config=config,
+        metadata={"backend_version": "1.0.0"},
+    )
+
+    result = scan_model(bundle, backend=backend)
+
+    assert [layer.layer_index for layer in result.layers] == [0]
+    assert model.state_dict_calls == 0
+    assert spy.state_keys_calls == 1
+    assert spy.tensor_metadata_calls == [None]
+    assert spy.load_tensors_calls == [
+        (
+            "model.language_model.layers.0.router.per_expert_scale",
+            "model.language_model.layers.0.router.proj.weight",
+            "model.language_model.layers.0.router.scale",
+        )
+    ]
+
+
 def test_require_tensor_rejects_missing_materialized_router_tensor_payload() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[0])

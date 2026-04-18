@@ -100,11 +100,10 @@ def _run_repo_pytest(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _check_repo_ignore(*paths: str) -> subprocess.CompletedProcess[str]:
+def _run_repo_python(code: str) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
     return subprocess.run(
-        ["git", "check-ignore", "-v", "--stdin"],
-        input="".join(f"{path}\n" for path in paths),
+        [sys.executable, "-c", code],
         check=False,
         capture_output=True,
         text=True,
@@ -124,6 +123,16 @@ def _list_tracked_repo_paths(*paths: str) -> list[str]:
     return result.stdout.splitlines()
 
 
+def _check_repo_ignore(*paths: str) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    return subprocess.run(
+        ["git", "check-ignore", "-v", "--stdin"],
+        input="".join(f"{path}\n" for path in paths),
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
 def _write_quality_gate_fixture_repo(
     root: Path,
     *,
@@ -354,6 +363,21 @@ def test_ci_workflow_runs_repo_metrics_entrypoint() -> None:
     assert 'uses: actions/setup-python@v5' in workflow_text
     assert 'uses: actions/setup-node@v6' in workflow_text
     assert 'run: npm run metrics -- --output .supervisor/logs/ci.metrics.json' in workflow_text
+
+
+def test_repo_python_process_imports_moe_surgeon_from_current_checkout_src() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = _run_repo_python(
+        (
+            "from pathlib import Path; "
+            "import moe_surgeon.analysis.scan as scan; "
+            "print(Path(scan.__file__).resolve())"
+        )
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    imported_path = Path(result.stdout.strip())
+    assert imported_path == (repo_root / "src" / "moe_surgeon" / "analysis" / "scan.py").resolve()
 
 
 def test_collect_metrics_uses_repo_supervisor_config_and_emits_typecheck(
