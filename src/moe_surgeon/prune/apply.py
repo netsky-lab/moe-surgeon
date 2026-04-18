@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
+import shutil
 from typing import Mapping, Sequence
 
 from moe_surgeon.models.backend import LoadedBackendBundle, resolve_backend
@@ -23,6 +24,7 @@ from moe_surgeon.schemas import (
     to_json,
 )
 
+from safetensors.torch import save_file
 import torch
 
 
@@ -61,6 +63,7 @@ class ApplyResult:
     source_metadata_digest: str
     model_handle: ModelHandle
     source_checkpoint_dir: str
+    output_checkpoint_dir: str | None
     source_checkpoint_fingerprint: str
     dry_run: bool
     created_at: str
@@ -78,6 +81,7 @@ class ApplyResult:
             "plan_id": self.plan_id,
             "source_metadata_digest": self.source_metadata_digest,
             "source_checkpoint_dir": self.source_checkpoint_dir,
+            "output_checkpoint_dir": self.output_checkpoint_dir,
             "source_checkpoint_fingerprint": self.source_checkpoint_fingerprint,
             "dry_run": self.dry_run,
             "created_at": self.created_at,
@@ -171,11 +175,13 @@ def apply_prune_plan(
     *,
     plan: PrunePlan,
     dry_run: bool = False,
+    output_dir: str | Path | None = None,
 ) -> ApplyResult:
     """Apply a deterministic prune plan to a local checkpoint in memory."""
 
     checkpoint = open_local_safetensors_checkpoint(checkpoint_dir)
     backend = _resolve_apply_backend(checkpoint)
+    _validate_plan_identity(plan, checkpoint=checkpoint, backend_name=backend.name)
     metadata_bundle = _metadata_bundle_from_checkpoint(checkpoint, backend=backend)
     topology = sort_topology(backend.extract_topology(metadata_bundle))
     plan_items = _validate_plan_against_topology(plan, topology=topology, model_id=checkpoint.model_id)
@@ -219,12 +225,24 @@ def apply_prune_plan(
     )
 
     if dry_run:
+        if output_dir is not None:
+            raise TopologyMismatchError(
+                "dry-run apply does not accept output_dir",
+                model_id=checkpoint.model_id,
+                details={"output_dir": str(output_dir)},
+            )
         derived_state_dict: Mapping[str, torch.Tensor] | None = None
         validation_state = _build_validation_state_from_metadata(
             checkpoint=checkpoint,
             layer_reports=layer_reports,
         )
+        output_checkpoint_dir: str | None = None
     else:
+        if output_dir is None:
+            raise TopologyMismatchError(
+                "non-dry-run apply requires output_dir",
+                model_id=checkpoint.model_id,
+            )
         source_state = checkpoint.load_tensors(checkpoint.state_keys())
         derived_state = {key: tensor for key, tensor in source_state.items()}
         for report in layer_reports:
@@ -239,6 +257,13 @@ def apply_prune_plan(
                 )
         derived_state_dict = derived_state
         validation_state = derived_state
+        output_checkpoint_dir = str(
+            _write_output_checkpoint_tree(
+                checkpoint=checkpoint,
+                derived_state_dict=derived_state,
+                output_dir=output_dir,
+            )
+        )
 
     validation_bundle = _bundle_with_state(checkpoint=checkpoint, backend=backend, state=validation_state)
     reports_by_layer = {report.layer_index: report for report in layer_reports}
@@ -295,6 +320,7 @@ def apply_prune_plan(
         source_metadata_digest=source_metadata_digest,
         model_handle=model_handle,
         source_checkpoint_dir=str(checkpoint.checkpoint_dir),
+        output_checkpoint_dir=output_checkpoint_dir,
         source_checkpoint_fingerprint=source_metadata_digest,
         dry_run=dry_run,
         created_at=CANONICAL_DEFAULT_TIMESTAMP,
@@ -304,6 +330,109 @@ def apply_prune_plan(
         derived_state_dict=derived_state_dict,
         metadata=metadata,
     )
+
+
+def _validate_plan_identity(
+    plan: PrunePlan,
+    *,
+    checkpoint: LocalSafetensorsCheckpoint,
+    backend_name: str,
+) -> None:
+    checkpoint_signature = _checkpoint_model_signature(checkpoint)
+    if plan.model_signature != checkpoint_signature:
+        raise TopologyMismatchError(
+            "prune plan model signature does not match checkpoint",
+            model_id=checkpoint.model_id,
+            details={
+                "checkpoint_model_signature": checkpoint_signature,
+                "plan_model_signature": plan.model_signature,
+            },
+        )
+    if plan.model_handle is None:
+        return
+    if plan.model_handle.model_id != checkpoint.model_id:
+        raise TopologyMismatchError(
+            "prune plan model_handle model_id does not match checkpoint",
+            model_id=checkpoint.model_id,
+            details={
+                "checkpoint_model_id": checkpoint.model_id,
+                "plan_model_id": plan.model_handle.model_id,
+            },
+        )
+    if plan.model_handle.revision != checkpoint.revision:
+        raise TopologyMismatchError(
+            "prune plan model_handle revision does not match checkpoint",
+            model_id=checkpoint.model_id,
+            details={
+                "checkpoint_revision": checkpoint.revision or "none",
+                "plan_revision": plan.model_handle.revision or "none",
+            },
+        )
+    if plan.model_handle.backend_name not in (None, backend_name):
+        raise TopologyMismatchError(
+            "prune plan model_handle backend_name does not match checkpoint backend",
+            model_id=checkpoint.model_id,
+            details={
+                "checkpoint_backend_name": backend_name,
+                "plan_backend_name": plan.model_handle.backend_name,
+            },
+        )
+
+
+def _checkpoint_model_signature(checkpoint: LocalSafetensorsCheckpoint) -> str:
+    revision = checkpoint.revision or "none"
+    return f"{checkpoint.model_id}:{revision}"
+
+
+def _write_output_checkpoint_tree(
+    *,
+    checkpoint: LocalSafetensorsCheckpoint,
+    derived_state_dict: Mapping[str, torch.Tensor],
+    output_dir: str | Path,
+) -> Path:
+    output_root = Path(output_dir).expanduser().resolve()
+    source_root = checkpoint.checkpoint_dir
+    if output_root == source_root:
+        raise TopologyMismatchError(
+            "output_dir must differ from source checkpoint directory",
+            model_id=checkpoint.model_id,
+            details={"output_dir": str(output_root)},
+        )
+    if output_root.exists():
+        if not output_root.is_dir():
+            raise TopologyMismatchError(
+                "output_dir must be a directory path",
+                model_id=checkpoint.model_id,
+                details={"output_dir": str(output_root)},
+            )
+        if any(output_root.iterdir()):
+            raise TopologyMismatchError(
+                "output_dir must be empty",
+                model_id=checkpoint.model_id,
+                details={"output_dir": str(output_root)},
+            )
+    else:
+        output_root.mkdir(parents=True, exist_ok=False)
+
+    for entry in sorted(source_root.iterdir(), key=lambda path: path.name):
+        if _is_weight_artifact(entry.name):
+            continue
+        target = output_root / entry.name
+        if entry.is_dir():
+            shutil.copytree(entry, target)
+        else:
+            shutil.copy2(entry, target)
+
+    serializable_state = {
+        key: derived_state_dict[key].detach().cpu().contiguous()
+        for key in sorted(derived_state_dict)
+    }
+    save_file(serializable_state, str(output_root / "model.safetensors"))
+    return output_root
+
+
+def _is_weight_artifact(filename: str) -> bool:
+    return filename.endswith(".safetensors") or filename == "model.safetensors.index.json"
 
 
 def _resolve_apply_backend(checkpoint: LocalSafetensorsCheckpoint) -> Gemma4Backend:

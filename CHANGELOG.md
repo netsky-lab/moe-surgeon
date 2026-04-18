@@ -6,8 +6,10 @@
   engine that validates full MoE-layer plan coverage, computes old-to-new
   expert remaps, slices `experts.gate_up_proj`, `experts.down_proj`,
   `router.proj.weight`, and `router.per_expert_scale` along the expert axis,
-  preserves non-MoE tensors as explicit passthrough inventory, and emits
-  stable dry-run/apply audit payloads with post-remap backend validation.
+  preserves non-MoE tensors as explicit passthrough inventory, binds
+  `PrunePlan` identity to the opened checkpoint, writes non-dry-run results to
+  a new derived checkpoint directory, and emits stable dry-run/apply audit
+  payloads with post-remap backend validation.
 - Exported the public prune/apply surface from `src/moe_surgeon/prune/__init__.py`
   and added offline regression coverage in `tests/test_prune_apply.py` for the
   required import path, deterministic dry-runs, remap correctness, pass-through

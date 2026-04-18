@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 import torch
 
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
@@ -142,11 +142,16 @@ def test_apply_prune_plan_dry_run_is_deterministic_and_reports_remap(tmp_path: P
 def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthrough(tmp_path: Path) -> None:
     source = _write_checkpoint(tmp_path)
     plan = _plan()
+    output_dir = tmp_path / "derived-checkpoint"
 
-    result = apply_prune_plan(tmp_path, plan=plan, dry_run=False)
+    result = apply_prune_plan(tmp_path, plan=plan, dry_run=False, output_dir=output_dir)
 
     assert result.derived_state_dict is not None
+    assert result.output_checkpoint_dir == str(output_dir.resolve())
+    assert (output_dir / "config.json").is_file()
+    assert (output_dir / "model.safetensors").is_file()
     derived = result.derived_state_dict
+    written = load_file(str(output_dir / "model.safetensors"))
     keep = torch.tensor([1, 3], dtype=torch.long)
 
     assert torch.equal(
@@ -177,6 +182,35 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
         derived["model.embed_tokens.weight"],
         source["model.embed_tokens.weight"],
     )
+    assert torch.equal(
+        written["model.language_model.layers.0.router.proj.weight"],
+        torch.index_select(source["model.language_model.layers.0.router.proj.weight"], 0, keep),
+    )
+    assert torch.equal(
+        written["model.embed_tokens.weight"],
+        source["model.embed_tokens.weight"],
+    )
+    reloaded_source = load_file(str(tmp_path / "model.safetensors"))
+    assert torch.equal(
+        reloaded_source["model.language_model.layers.0.router.proj.weight"],
+        source["model.language_model.layers.0.router.proj.weight"],
+    )
+
+
+def test_apply_prune_plan_rejects_plan_checkpoint_identity_mismatch(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    plan.model_signature = "some-other-model:wrong-revision"
+    plan.model_handle = ModelHandle(
+        model_id="some-other-model",
+        revision="wrong-revision",
+        backend_name="gemma4",
+    )
+
+    with pytest.raises(TopologyMismatchError, match="model signature does not match checkpoint") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "plan_model_signature=some-other-model:wrong-revision" in str(exc_info.value)
 
 
 def test_apply_prune_plan_rejects_unknown_plan_layer(tmp_path: Path) -> None:
