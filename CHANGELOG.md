@@ -357,6 +357,12 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-19
+- Tightened the README module-structure claim so `models/` explicitly documents
+  `src/moe_surgeon/models/checkpoints.py` as a checked-in implementation file
+  within the lightweight checkpoint-reader surface.
+- Hardened `tests/test_docs_consistency.py` so the tracked-layout inventory now
+  requires documented source paths to exist on disk in addition to being listed
+  by git, closing the stale-index gap for README-backed source-file claims.
 - Added `tests/test_docs_consistency.py` with a tracked-source layout harness
   that locks the checked-in `src/moe_surgeon/` package/module tree to the
   documented Python package names and file paths, including

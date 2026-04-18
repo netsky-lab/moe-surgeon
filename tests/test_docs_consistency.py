@@ -17,6 +17,7 @@ SOURCE_ROOT = Path("src/moe_surgeon")
 class SourceInventory:
     package_dirs: frozenset[str]
     module_files: frozenset[str]
+    existing_paths: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,9 @@ def _tracked_source_inventory() -> SourceInventory:
     return SourceInventory(
         package_dirs=frozenset(package_dirs),
         module_files=frozenset(module_files),
+        existing_paths=frozenset(
+            path for path in tracked_paths if (REPO_ROOT / path).exists()
+        ),
     )
 
 
@@ -113,6 +117,18 @@ def test_layout_tracked_source_inventory_matches_documented_package_layout() -> 
             "moe_surgeon/schemas.py",
         }
     )
+    assert inventory.existing_paths.issuperset(
+        {
+            "src/moe_surgeon/__init__.py",
+            "src/moe_surgeon/analysis/__init__.py",
+            "src/moe_surgeon/cli/__init__.py",
+            "src/moe_surgeon/export/__init__.py",
+            "src/moe_surgeon/models/__init__.py",
+            "src/moe_surgeon/models/checkpoints.py",
+            "src/moe_surgeon/prune/__init__.py",
+            "src/moe_surgeon/runtime/__init__.py",
+        }
+    )
     assert "moe_surgeon/models/checkpoints.py" in inventory.module_files
 
 
@@ -138,11 +154,15 @@ def test_readme_source_file_claims_exist_in_tracked_layout() -> None:
     inventory = _tracked_source_inventory()
     claims = _readme_claims()
 
-    assert claims.source_files == ("src/moe_surgeon/schemas.py",)
+    assert claims.source_files == (
+        "src/moe_surgeon/models/checkpoints.py",
+        "src/moe_surgeon/schemas.py",
+    )
     assert {
         str(Path(path).relative_to("src"))
         for path in claims.source_files
     }.issubset(inventory.module_files)
+    assert set(claims.source_files).issubset(inventory.existing_paths)
 
 
 def test_checkpoint_architecture_claim_tracks_reader_file_presence() -> None:

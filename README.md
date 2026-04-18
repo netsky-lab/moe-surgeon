@@ -71,7 +71,8 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 ## Module structure
 
 - cli/: command graph and orchestration (scan, bench, prune, export)
-- models/: backend adapters, lightweight checkpoint readers, and topology/contracts
+- models/: backend adapters, lightweight checkpoint readers such as
+  `src/moe_surgeon/models/checkpoints.py`, and topology/contracts
 - analysis/: static router analysis
 - runtime/: forward hook profiler
 - prune/: strategy and plan generation (selection only)
