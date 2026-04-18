@@ -100,6 +100,30 @@ def _run_repo_pytest(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _check_repo_ignore(*paths: str) -> subprocess.CompletedProcess[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    return subprocess.run(
+        ["git", "check-ignore", "-v", "--stdin"],
+        input="".join(f"{path}\n" for path in paths),
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+
+
+def _list_tracked_repo_paths(*paths: str) -> list[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["git", "ls-files", "--", *paths],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    return result.stdout.splitlines()
+
+
 def _write_quality_gate_fixture_repo(
     root: Path,
     *,
@@ -247,6 +271,46 @@ def test_repo_pytest_config_disables_plugin_autoload_and_uses_repo_basetemp() ->
     assert 'integration: opt-in tests that may access live external services or model artifacts' in (
         pyproject_text
     )
+
+
+def test_repo_gitignore_quarantines_quality_gate_and_supervisor_artifacts() -> None:
+    result = _check_repo_ignore(
+        ".tmp/pytest/test.txt",
+        ".tmp/system/cache.txt",
+        ".tmp/quality-gates-direct/metrics.json",
+        ".tmp/quality-gates-metrics/run/stdout.txt",
+        ".supervisor/logs/task-0d36df06.log",
+        ".supervisor/logs/task-0d36df06.metrics.json",
+        ".supervisor/project.json",
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    output_lines = result.stdout.splitlines()
+    assert any("/.tmp/*" in line and ".tmp/pytest/test.txt" in line for line in output_lines)
+    assert any("/.tmp/*" in line and ".tmp/system/cache.txt" in line for line in output_lines)
+    assert any(
+        "/.tmp/*" in line and ".tmp/quality-gates-direct/metrics.json" in line
+        for line in output_lines
+    )
+    assert any(
+        "/.tmp/*" in line and ".tmp/quality-gates-metrics/run/stdout.txt" in line
+        for line in output_lines
+    )
+    assert any(".supervisor/" in line and ".supervisor/logs/task-0d36df06.log" in line for line in output_lines)
+    assert any(
+        ".supervisor/" in line and ".supervisor/logs/task-0d36df06.metrics.json" in line
+        for line in output_lines
+    )
+    assert any(".supervisor/" in line and ".supervisor/project.json" in line for line in output_lines)
+
+    gitkeep_result = _check_repo_ignore(".tmp/.gitkeep")
+    assert gitkeep_result.returncode == 1
+    assert gitkeep_result.stdout == ""
+
+
+def test_repo_index_no_longer_tracks_transient_supervisor_logs() -> None:
+    assert _list_tracked_repo_paths(".supervisor/logs", "ci.metrics.json") == []
+    assert _list_tracked_repo_paths(".tmp") == [".tmp/.gitkeep"]
 
 
 def test_default_python_m_pytest_deselects_integration_marker() -> None:

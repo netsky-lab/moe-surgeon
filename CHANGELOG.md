@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Broadened `.gitignore` coverage for repo-managed temp outputs from the
+  pytest-only path to all repo-local `.tmp/*` families while preserving the
+  tracked `.tmp/.gitkeep` sentinel, so direct and metrics-driven quality-gate
+  artifacts such as `.tmp/quality-gates-*` no longer show up as project
+  changes.
+- Added `tests/test_repo_metrics.py` regressions for both sides of the
+  quarantine contract: Git ignore matching for generated `.tmp/*` and
+  `.supervisor/*` artifacts, plus a direct repo-index assertion that
+  `.supervisor/logs` no longer contains tracked files while `.tmp/.gitkeep`
+  remains the only tracked `.tmp` sentinel.
 - Reconciled the task ledger for the already-merged checkpoint-reader
   regression covering indexed keys that point to an existing shard file whose
   payload omits the indexed tensor; the regression remains in
