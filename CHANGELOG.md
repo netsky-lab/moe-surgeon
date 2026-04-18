@@ -312,3 +312,8 @@
 - Tightened `pyproject.toml` and `README.md` so package metadata and setup guidance no longer imply pre-5.5.0 Transformers releases are acceptable for Gemma4 execution.
 - Expanded `tests/test_models_gemma4.py` with offline regressions for below-floor runtime failures, missing-symbol failures at the supported floor, and a packaging-floor consistency check against `pyproject.toml`.
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
+
+## 2026-04-18
+- Re-scoped the pytest temp-artifact follow-up to a verification pass and added
+  `tests/test_repo_metrics.py` coverage asserting the git index contains no
+  tracked symlink entries outside the existing `/.tmp/*` quarantine.

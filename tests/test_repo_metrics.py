@@ -124,6 +124,24 @@ def _list_tracked_repo_paths(*paths: str) -> list[str]:
     return result.stdout.splitlines()
 
 
+def _list_tracked_repo_symlinks() -> list[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["git", "ls-files", "-s"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    tracked_symlinks: list[str] = []
+    for line in result.stdout.splitlines():
+        metadata, _, path = line.partition("\t")
+        mode = metadata.split(maxsplit=1)[0]
+        if mode == "120000":
+            tracked_symlinks.append(path)
+    return tracked_symlinks
+
+
 def _write_quality_gate_fixture_repo(
     root: Path,
     *,
@@ -311,6 +329,10 @@ def test_repo_gitignore_quarantines_quality_gate_and_supervisor_artifacts() -> N
 def test_repo_index_no_longer_tracks_transient_supervisor_logs() -> None:
     assert _list_tracked_repo_paths(".supervisor/logs", "ci.metrics.json") == []
     assert _list_tracked_repo_paths(".tmp") == [".tmp/.gitkeep"]
+
+
+def test_repo_index_tracks_no_symlink_entries_outside_tmp_quarantine() -> None:
+    assert _list_tracked_repo_symlinks() == []
 
 
 def test_default_python_m_pytest_deselects_integration_marker() -> None:
