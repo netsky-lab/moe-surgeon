@@ -237,6 +237,16 @@
 - Expanded CLI regression coverage for package metadata exposure, wrapper-based
   help rendering, and heavy dependency avoidance on the help path.
 
+# 2026-04-18
+- Taught `src/moe_surgeon/analysis/scan.py` to reuse the shared local
+  safetensors checkpoint reader for checkpoint-backed static scans, deriving
+  topology and tensor-shape state from `state_keys()` and `tensor_metadata()`
+  and loading only per-layer router tensors through `load_tensors()` instead of
+  requiring a fully materialized model state dict.
+- Added scan regressions in `tests/test_analysis_scan.py` covering both the
+  new local-checkpoint reader path and the fail-fast diagnostic when scan has
+  neither materialized tensors nor a readable local safetensors checkpoint.
+
 ## 2026-04-17
 - Made the direct quality gates hermetic across tempdir- and
   cache-constrained environments by adding an installed `src/sitecustomize.py`

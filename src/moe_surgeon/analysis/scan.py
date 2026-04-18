@@ -12,6 +12,10 @@ import torch
 
 from moe_surgeon.analysis.metrics import RouterMetricSummary, build_expert_stats
 from moe_surgeon.models.backend import LoadedBackendBundle, ModelBackend, resolve_backend
+from moe_surgeon.models.checkpoints import (
+    LocalSafetensorsCheckpoint,
+    open_local_safetensors_checkpoint,
+)
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.schemas import (
     ActivationStats,
@@ -76,21 +80,58 @@ def _resolve_scan_backend(
     return resolve_backend(bundle.config, model_id=bundle.model_handle.model_id)
 
 
-def _materialized_state_dict(bundle: LoadedBackendBundle) -> Mapping[str, object]:
+def _bundle_with_local_checkpoint_state(
+    bundle: LoadedBackendBundle,
+    checkpoint: LocalSafetensorsCheckpoint,
+) -> LoadedBackendBundle:
+    metadata = dict(bundle.metadata)
+    metadata["state_keys"] = checkpoint.state_keys()
+    metadata["state_dict"] = {
+        item.tensor_key: item for item in checkpoint.tensor_metadata()
+    }
+    return LoadedBackendBundle(
+        backend_name=bundle.backend_name,
+        model_handle=bundle.model_handle,
+        model=bundle.model,
+        config=bundle.config,
+        tokenizer=bundle.tokenizer,
+        metadata=metadata,
+    )
+
+
+def _resolve_local_checkpoint(bundle: LoadedBackendBundle) -> LocalSafetensorsCheckpoint | None:
+    source_path = bundle.model_handle.source_path
+    if source_path is None:
+        return None
+    root = Path(source_path).expanduser()
+    if not root.is_dir():
+        return None
+    return open_local_safetensors_checkpoint(root)
+
+
+def _scan_state(
+    bundle: LoadedBackendBundle,
+) -> tuple[LoadedBackendBundle, Mapping[str, object] | None, LocalSafetensorsCheckpoint | None]:
     metadata_state = bundle.metadata.get("state_dict")
     if isinstance(metadata_state, Mapping):
-        return metadata_state
+        return bundle, metadata_state, None
 
     state_dict = getattr(bundle.model, "state_dict", None)
     if callable(state_dict):
         loaded_state = state_dict()
         if isinstance(loaded_state, Mapping):
-            return loaded_state
+            return bundle, loaded_state, None
 
-    if "state_keys" in bundle.metadata:
+    checkpoint = _resolve_local_checkpoint(bundle)
+    if checkpoint is not None:
+        prepared_bundle = _bundle_with_local_checkpoint_state(bundle, checkpoint)
+        return prepared_bundle, None, checkpoint
+
+    if "state_keys" in bundle.metadata or bundle.model_handle.source_path is not None:
         raise TopologyMismatchError(
-            "static scan requires materialized numeric tensors, not topology-only state_keys metadata",
+            "static scan requires materialized numeric tensors or a readable local safetensors checkpoint",
             model_id=bundle.model_handle.model_id,
+            details={"source_path": bundle.model_handle.source_path or "unknown"},
         )
 
     raise TopologyMismatchError(
@@ -160,6 +201,30 @@ def _enrich_router_state(
         route_scale_present=router_state.route_scale_present,
         metadata=metadata,
     )
+
+
+def _metric_tensors_for_layer(
+    *,
+    bundle: LoadedBackendBundle,
+    layer: LayerTopology,
+    state_dict: Mapping[str, object] | None,
+    checkpoint: LocalSafetensorsCheckpoint | None,
+) -> Mapping[str, object]:
+    if checkpoint is None:
+        if state_dict is None:
+            raise TopologyMismatchError(
+                "static scan requires materialized state_dict tensor values",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+            )
+        return state_dict
+
+    tensor_names = [
+        layer.module_paths["router_proj"],
+        layer.module_paths["router_scale"],
+        layer.module_paths["router_per_expert_scale"],
+    ]
+    return checkpoint.load_tensors(tensor_names)
 
 
 def _validate_metric_tensor(
@@ -315,22 +380,38 @@ def scan_model(
 ) -> StaticScanResult:
     """Scan static router weights for all backend-validated MoE layers."""
 
-    active_backend = _resolve_scan_backend(bundle, backend=backend)
-    layers = sort_topology(active_backend.extract_topology(bundle))
-    state_dict = _materialized_state_dict(bundle)
+    prepared_bundle, state_dict, checkpoint = _scan_state(bundle)
+    active_backend = _resolve_scan_backend(prepared_bundle, backend=backend)
+    layers = sort_topology(active_backend.extract_topology(prepared_bundle))
 
     router_states: list[RouterState] = []
     expert_stats: list[ExpertStats] = []
     layer_summaries: list[RouterMetricSummary] = []
     for layer in layers:
-        router_state = active_backend.extract_router_state(bundle, layer=layer)
-        active_backend.validate_layer(bundle, layer=layer, router_state=router_state)
+        router_state = active_backend.extract_router_state(prepared_bundle, layer=layer)
+        active_backend.validate_layer(prepared_bundle, layer=layer, router_state=router_state)
+        layer_metric_tensors = _metric_tensors_for_layer(
+            bundle=prepared_bundle,
+            layer=layer,
+            state_dict=state_dict,
+            checkpoint=checkpoint,
+        )
 
-        router_proj_weight = _require_tensor(state_dict, bundle=bundle, layer=layer, tensor_role="router_proj")
-        route_scale = _require_tensor(state_dict, bundle=bundle, layer=layer, tensor_role="router_scale")
+        router_proj_weight = _require_tensor(
+            layer_metric_tensors,
+            bundle=prepared_bundle,
+            layer=layer,
+            tensor_role="router_proj",
+        )
+        route_scale = _require_tensor(
+            layer_metric_tensors,
+            bundle=prepared_bundle,
+            layer=layer,
+            tensor_role="router_scale",
+        )
         per_expert_scale = _require_tensor(
-            state_dict,
-            bundle=bundle,
+            layer_metric_tensors,
+            bundle=prepared_bundle,
             layer=layer,
             tensor_role="router_per_expert_scale",
         )
@@ -341,14 +422,14 @@ def scan_model(
         )
         _validate_metric_tensor(
             router_proj_weight,
-            bundle=bundle,
+            bundle=prepared_bundle,
             layer=layer,
             tensor_role="router_proj",
             expected_rank=2,
         )
         _validate_metric_tensor(
             per_expert_scale,
-            bundle=bundle,
+            bundle=prepared_bundle,
             layer=layer,
             tensor_role="router_per_expert_scale",
             expected_rank=1,
@@ -366,16 +447,16 @@ def scan_model(
 
     aggregate_summary = _aggregate_summary(layer_summaries, expert_stats)
     manifest = RunArtifactManifest(
-        run_id=f"scan-static-{bundle.model_handle.model_fingerprint[:12]}",
+        run_id=f"scan-static-{prepared_bundle.model_handle.model_fingerprint[:12]}",
         command="scan",
-        model_handle=bundle.model_handle,
+        model_handle=prepared_bundle.model_handle,
         top_k=layers[0].top_k if layers else 1,
         prompt_count=0,
-        seed=bundle.model_handle.seed,
+        seed=prepared_bundle.model_handle.seed,
         metadata={
             "moe_layer_count": len(layers),
             "expert_stat_count": len(expert_stats),
-            "backend_name": bundle.backend_name,
+            "backend_name": prepared_bundle.backend_name,
             "total_static_gate_mass": aggregate_summary.total_static_gate_mass,
             "total_top_k_mass_proxy": aggregate_summary.total_top_k_mass_proxy,
             "mean_normalized_entropy": aggregate_summary.mean_normalized_entropy,
@@ -397,6 +478,7 @@ def scan_model(
         aggregate_summary=result.aggregate_summary,
         manifest=_manifest_with_scan_digests(result),
     )
+
 
 def build_layer_topology_index(layers: Sequence[LayerTopology]) -> dict[int, LayerTopology]:
     """Build a deterministic layer-index lookup with duplicate protection."""
