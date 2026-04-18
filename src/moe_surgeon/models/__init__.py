@@ -1,3 +1,5 @@
-"""Backend adapters for model-specific MoE extraction."""
+"""Backend adapters, lightweight checkpoint readers, and topology contracts."""
 
-__all__ = []
+PACKAGE_DESCRIPTION = "backend adapters, lightweight checkpoint readers, and topology/contracts"
+
+__all__ = ["PACKAGE_DESCRIPTION"]

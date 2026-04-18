@@ -2,6 +2,14 @@
 
 PACKAGE_NAME = "moe-surgeon"
 PACKAGE_DESCRIPTION = "Python CLI for analyzing and pruning MoE models"
+PACKAGE_LAYOUT = {
+    "cli": "command graph and orchestration",
+    "models": "backend adapters, lightweight checkpoint readers, and topology/contracts",
+    "analysis": "static router analysis",
+    "runtime": "forward hook profiler",
+    "prune": "strategy and plan generation (selection only)",
+    "export": "artifact persistence and manifest output",
+}
 __version__ = "0.1.0"
 
-__all__ = ["PACKAGE_DESCRIPTION", "PACKAGE_NAME", "__version__"]
+__all__ = ["PACKAGE_DESCRIPTION", "PACKAGE_LAYOUT", "PACKAGE_NAME", "__version__"]

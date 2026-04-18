@@ -362,6 +362,15 @@
   documented Python package names and file paths, including
   `src/moe_surgeon/models/checkpoints.py`, as a stable base for later
   README/architecture claim checks.
+- Extended that docs-consistency coverage to assert the `README.md` module
+  buckets and explicit source-file references map to tracked packages/files,
+  and to lock the `ARCHITECTURE.md` checkpoint-reader claim to the checked-in
+  `src/moe_surgeon/models/checkpoints.py` helper plus its offline,
+  non-`transformers` introspection role.
+- Added package-level description constants in `src/moe_surgeon/__init__.py`
+  and `src/moe_surgeon/models/__init__.py` so the checked-in source describes
+  the same models/checkpoint-reader responsibility split asserted by the docs
+  consistency harness.
 
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
