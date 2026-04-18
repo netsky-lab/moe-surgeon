@@ -123,6 +123,26 @@ def _list_tracked_repo_paths(*paths: str) -> list[str]:
     return result.stdout.splitlines()
 
 
+def _list_tracked_repo_symlinks() -> list[str]:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        ["git", "ls-files", "-z", "-s"],
+        check=True,
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    symlink_paths: list[str] = []
+    for entry in result.stdout.split("\0"):
+        if not entry:
+            continue
+        metadata, path = entry.split("\t", 1)
+        mode = metadata.split()[0]
+        if mode == "120000":
+            symlink_paths.append(path)
+    return symlink_paths
+
+
 def _check_repo_ignore(*paths: str) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[1]
     return subprocess.run(
@@ -320,6 +340,34 @@ def test_repo_gitignore_quarantines_quality_gate_and_supervisor_artifacts() -> N
 def test_repo_index_no_longer_tracks_transient_supervisor_logs() -> None:
     assert _list_tracked_repo_paths(".supervisor/logs", "ci.metrics.json") == []
     assert _list_tracked_repo_paths(".tmp") == [".tmp/.gitkeep"]
+
+
+def test_repo_git_index_excludes_pytest_symlinks_outside_tmp_quarantine() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    result = _run_repo_pytest("-q", "tests/test_cli.py")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+
+    tracked_symlinks_outside_tmp = [
+        path for path in _list_tracked_repo_symlinks() if not path.startswith(".tmp/")
+    ]
+    assert tracked_symlinks_outside_tmp == []
+
+    pytest_symlink_paths = sorted(
+        path.relative_to(repo_root).as_posix()
+        for path in (repo_root / ".tmp" / "pytest").glob("*current")
+        if path.is_symlink()
+    )
+
+    assert pytest_symlink_paths
+    assert all(path.startswith(".tmp/pytest/") for path in pytest_symlink_paths)
+    assert _list_tracked_repo_paths(*pytest_symlink_paths) == []
+
+    ignore_result = _check_repo_ignore(*pytest_symlink_paths)
+    assert ignore_result.returncode == 0, ignore_result.stderr or ignore_result.stdout
+    output_lines = ignore_result.stdout.splitlines()
+    for path in pytest_symlink_paths:
+        assert any("/.tmp/*" in line and path in line for line in output_lines)
 
 
 def test_default_python_m_pytest_deselects_integration_marker() -> None:

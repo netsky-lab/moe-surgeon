@@ -336,6 +336,8 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-18
-- Re-scoped the pytest temp-artifact follow-up to a verification pass and
-  confirmed no additional tracked non-`.tmp` cleanup was needed; pytest still
-  creates ignored worktree symlinks under `.tmp/pytest/*current` during runs.
+- Audited the git index for tracked symlink entries and confirmed there are no
+  tracked symlinks outside the `.tmp/` quarantine.
+- Added a repo-metrics regression that runs a real repo-local pytest subprocess,
+  verifies the residual `*current` symlinks still reproduce under
+  `.tmp/pytest/`, and asserts those symlinks are ignored and untracked.
