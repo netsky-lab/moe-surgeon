@@ -34,7 +34,7 @@ moe_surgeon/
     - __init__.py
     - strategies.py
     - planner.py
-    - apply.py (future)
+    - apply.py
   - export/
     - __init__.py
     - safetensors_writer.py (future)
@@ -80,6 +80,10 @@ Pruning uses a pure strategy layer first, followed by a planner:
   plan payload so repeated identical inputs produce byte-stable JSON.
 
 Mutations are performed in a later apply layer after planning.
+The apply layer consumes validated `PrunePlan` items plus checkpoint/topology
+context, computes deterministic expert remaps, rewrites only the targeted MoE
+tensors into a derived checkpoint tree, and revalidates the remapped tensor
+layouts before any output is materialized.
 
 ## Data flow
 

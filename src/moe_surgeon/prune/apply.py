@@ -257,13 +257,7 @@ def apply_prune_plan(
                 )
         derived_state_dict = derived_state
         validation_state = derived_state
-        output_checkpoint_dir = str(
-            _write_output_checkpoint_tree(
-                checkpoint=checkpoint,
-                derived_state_dict=derived_state,
-                output_dir=output_dir,
-            )
-        )
+        output_checkpoint_dir = None
 
     validation_bundle = _bundle_with_state(checkpoint=checkpoint, backend=backend, state=validation_state)
     reports_by_layer = {report.layer_index: report for report in layer_reports}
@@ -280,6 +274,17 @@ def apply_prune_plan(
                 tensor_value=validation_state[tensor_key],
                 target_expert_count=report.target_expert_count,
             )
+
+    if not dry_run:
+        assert derived_state_dict is not None
+        assert output_dir is not None
+        output_checkpoint_dir = str(
+            _write_output_checkpoint_tree(
+                checkpoint=checkpoint,
+                derived_state_dict=derived_state_dict,
+                output_dir=output_dir,
+            )
+        )
 
     metadata = {
         "checkpoint_tensor_count": len(checkpoint.state_keys()),

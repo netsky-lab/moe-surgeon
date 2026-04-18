@@ -10,6 +10,7 @@ from safetensors.torch import load_file, save_file
 import torch
 
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
 from moe_surgeon.schemas import ModelHandle, PrunePlan, PrunePlanItem
 
@@ -126,9 +127,9 @@ def test_apply_prune_plan_dry_run_is_deterministic_and_reports_remap(tmp_path: P
     assert first.manifest_json() == second.manifest_json()
     assert first.audit_json() == second.audit_json()
     assert first.derived_state_dict is None
-    assert first.layer_reports[0].keep_indices == (1, 3)
+    assert first.layer_reports[0].keep_indices == (3, 1)
     assert first.layer_reports[0].drop_indices == (0, 2)
-    assert first.layer_reports[0].old_to_new_index == ((1, 0), (3, 1))
+    assert first.layer_reports[0].old_to_new_index == ((3, 0), (1, 1))
     assert first.rewritten_tensor_keys == (
         "model.language_model.layers.0.experts.down_proj",
         "model.language_model.layers.0.experts.gate_up_proj",
@@ -152,7 +153,7 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
     assert (output_dir / "model.safetensors").is_file()
     derived = result.derived_state_dict
     written = load_file(str(output_dir / "model.safetensors"))
-    keep = torch.tensor([1, 3], dtype=torch.long)
+    keep = torch.tensor([3, 1], dtype=torch.long)
 
     assert torch.equal(
         derived["model.language_model.layers.0.router.proj.weight"],
@@ -195,6 +196,47 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
         reloaded_source["model.language_model.layers.0.router.proj.weight"],
         source["model.language_model.layers.0.router.proj.weight"],
     )
+
+
+def test_apply_prune_plan_does_not_write_output_tree_when_post_validation_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_checkpoint(tmp_path)
+    output_dir = tmp_path / "derived-checkpoint"
+    original_validate = Gemma4Backend.validate_prune_tensor
+
+    def fail_after_remap_validation(
+        self: Gemma4Backend,
+        bundle: object,
+        *,
+        layer: object,
+        tensor_role: str,
+        tensor_key: str,
+        tensor_value: object,
+        target_expert_count: int,
+    ) -> None:
+        if target_expert_count == 2 and tensor_role == "router_proj":
+            raise ShapeInvariantViolationError(
+                "forced post-remap validation failure",
+                model_id="google/gemma-4-27b",
+            )
+        original_validate(
+            self,
+            bundle,
+            layer=layer,
+            tensor_role=tensor_role,
+            tensor_key=tensor_key,
+            tensor_value=tensor_value,
+            target_expert_count=target_expert_count,
+        )
+
+    monkeypatch.setattr(Gemma4Backend, "validate_prune_tensor", fail_after_remap_validation)
+
+    with pytest.raises(ShapeInvariantViolationError, match="forced post-remap validation failure"):
+        apply_prune_plan(tmp_path, plan=_plan(), dry_run=False, output_dir=output_dir)
+
+    assert not output_dir.exists()
 
 
 def test_apply_prune_plan_rejects_plan_checkpoint_identity_mismatch(tmp_path: Path) -> None:
