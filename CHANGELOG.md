@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Updated `README.md` and `ARCHITECTURE.md` so the documented `models/`
+  package and module responsibilities now explicitly include the tracked local
+  safetensors checkpoint reader in `src/moe_surgeon/models/checkpoints.py`.
 - Pinned pytest discovery to `tests/` in `pyproject.toml` so helper modules
   under `src/` such as `src/moe_surgeon/test_env.py` are not collected as test
   files, avoiding worktree/import-mismatch failures during repo-metrics and

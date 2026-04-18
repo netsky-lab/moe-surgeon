@@ -19,6 +19,7 @@ moe_surgeon/
   - models/
     - __init__.py
     - backend.py
+    - checkpoints.py
     - registry.py
     - errors.py
     - gemma4.py
@@ -59,6 +60,11 @@ ambiguous-match diagnostics.
 Gemma 4 discovery is config-first: lightweight signatures route to the backend
 without importing ML runtimes, then runtime loading performs explicit
 Transformers capability checks before attempting model construction.
+
+The `models/checkpoints.py` helper provides offline-local `safetensors`
+checkpoint introspection for single-file and indexed sharded layouts, exposing
+deterministic `state_keys` and targeted tensor reads without importing
+`transformers` or materializing a full model.
 
 ### Strategy pattern in prune
 
