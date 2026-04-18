@@ -101,8 +101,9 @@ def ensure_repo_src_import_path(
         target_env["PYTHONPATH"] = src_path
         return target_env
 
-    entries = [entry for entry in python_path.split(os.pathsep) if entry and entry != src_path]
-    entries.insert(0, src_path)
+    entries = [entry for entry in python_path.split(os.pathsep) if entry]
+    if src_path not in entries:
+        entries.append(src_path)
     target_env["PYTHONPATH"] = os.pathsep.join(entries)
     return target_env
 
