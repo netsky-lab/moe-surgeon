@@ -774,16 +774,13 @@ class PrunePlanItem(_SchemaBase):
             _ensure_non_empty_str(self.rationale, name="rationale")
         self.metadata = _canonicalize_metadata(self.metadata)
 
-        self.keep_indices = tuple(sorted(self.keep_indices))
-        self.drop_indices = tuple(sorted(self.drop_indices))
-
     @property
     def ordered_keep_indices(self) -> Tuple[int, ...]:
-        return tuple(sorted(self.keep_indices))
+        return self.keep_indices
 
     @property
     def ordered_drop_indices(self) -> Tuple[int, ...]:
-        return tuple(sorted(self.drop_indices))
+        return self.drop_indices
 
     @property
     def total_dropped(self) -> int:

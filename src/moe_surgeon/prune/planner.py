@@ -505,7 +505,7 @@ def build_prune_plan(
         model_signature
         if model_signature is not None
         else (
-            model_handle.model_fingerprint
+            _default_model_signature(model_handle)
             if model_handle is not None
             else "unknown"
         )
@@ -550,6 +550,11 @@ def build_prune_plan(
         ),
         metadata=metadata,
     )
+
+
+def _default_model_signature(model_handle: ModelHandle) -> str:
+    revision = model_handle.revision or "none"
+    return f"{model_handle.model_id}:{revision}"
 
 
 __all__ = [

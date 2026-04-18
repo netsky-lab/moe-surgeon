@@ -354,6 +354,133 @@ class Gemma4Backend:
             )
         return dict(sorted(resolved.items()))
 
+    def resolve_prune_tensor_keys(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer_index: int,
+    ) -> Mapping[str, str]:
+        """Return the MoE tensor keys rewritten by prune/apply for one layer."""
+
+        tensor_keys = self.resolve_layer_tensor_keys(bundle, layer_index=layer_index)
+        return {
+            "experts_down_proj": tensor_keys["experts_down_proj"],
+            "experts_gate_up_proj": tensor_keys["experts_gate_up_proj"],
+            "router_per_expert_scale": tensor_keys["router_per_expert_scale"],
+            "router_proj": tensor_keys["router_proj"],
+            "router_scale": tensor_keys["router_scale"],
+        }
+
+    def expected_prune_tensor_shapes(
+        self,
+        *,
+        layer: LayerTopology,
+        target_expert_count: int,
+    ) -> Mapping[str, tuple[int, ...]]:
+        """Return the expected Gemma4 prune tensor shapes for a target expert count."""
+
+        if layer.moe_intermediate_size is None:
+            raise TopologyMismatchError(
+                "Gemma4 config must include moe_intermediate_size for expert validation",
+                layer_index=layer.layer_index,
+            )
+        if target_expert_count <= 0:
+            raise TopologyMismatchError(
+                "target expert count must be positive",
+                layer_index=layer.layer_index,
+                details={"target_expert_count": target_expert_count},
+            )
+        return {
+            "experts_down_proj": self._expected_expert_shape(
+                tensor_name="experts.down_proj",
+                expected_experts=target_expert_count,
+                expected_hidden_size=layer.hidden_size,
+                expected_moe_intermediate_size=layer.moe_intermediate_size,
+            ),
+            "experts_gate_up_proj": self._expected_expert_shape(
+                tensor_name="experts.gate_up_proj",
+                expected_experts=target_expert_count,
+                expected_hidden_size=layer.hidden_size,
+                expected_moe_intermediate_size=layer.moe_intermediate_size,
+            ),
+            "router_per_expert_scale": (target_expert_count,),
+            "router_proj": (target_expert_count, layer.hidden_size),
+            "router_scale": (),
+        }
+
+    def validate_prune_tensor(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+        tensor_role: str,
+        tensor_key: str,
+        tensor_value: object,
+        target_expert_count: int,
+    ) -> tuple[int, ...]:
+        """Validate one prune/apply tensor against Gemma4 layer layout rules."""
+
+        shape = self._tensor_shape(tensor_value, allow_scalar=tensor_role == "router_scale")
+        if tensor_role == "router_proj":
+            self._validate_router_projection(
+                shape,
+                bundle=bundle,
+                layer=layer,
+                expected_experts=target_expert_count,
+                expected_hidden_size=layer.hidden_size,
+                tensor_key=tensor_key,
+            )
+            return shape
+        if tensor_role == "router_per_expert_scale":
+            self._validate_per_expert_scale(
+                shape,
+                bundle=bundle,
+                layer=layer,
+                expected_experts=target_expert_count,
+                tensor_key=tensor_key,
+            )
+            return shape
+        if tensor_role == "router_scale":
+            self._validate_router_scale(
+                shape,
+                bundle=bundle,
+                layer=layer,
+                expected_hidden_size=layer.hidden_size,
+                tensor_key=tensor_key,
+            )
+            return shape
+        if tensor_role == "experts_gate_up_proj":
+            self._validate_expert_tensor(
+                shape,
+                bundle=bundle,
+                layer=layer,
+                expected_experts=target_expert_count,
+                expected_moe_intermediate_size=layer.moe_intermediate_size,
+                expected_hidden_size=layer.hidden_size,
+                tensor_key=tensor_key,
+                tensor_name="experts.gate_up_proj",
+            )
+            return shape
+        if tensor_role == "experts_down_proj":
+            self._validate_expert_tensor(
+                shape,
+                bundle=bundle,
+                layer=layer,
+                expected_experts=target_expert_count,
+                expected_moe_intermediate_size=layer.moe_intermediate_size,
+                expected_hidden_size=layer.hidden_size,
+                tensor_key=tensor_key,
+                tensor_name="experts.down_proj",
+            )
+            return shape
+        raise TopologyMismatchError(
+            "unsupported prune tensor role",
+            model_id=bundle.model_handle.model_id,
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            details={"tensor_role": tensor_role},
+        )
+
     def extract_router_state(
         self,
         bundle: LoadedBackendBundle,

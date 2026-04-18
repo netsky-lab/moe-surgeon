@@ -28,11 +28,13 @@ from __future__ import annotations
 import atexit
 import json
 import os
+from pathlib import Path
 import sys
 
 
 def _dump_imports() -> None:
     output_path = os.environ["MOE_SURGEON_IMPORT_PROBE_OUTPUT"]
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8") as handle:
         json.dump(sorted(sys.modules), handle)
 

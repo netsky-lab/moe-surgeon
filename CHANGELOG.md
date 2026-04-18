@@ -35,6 +35,26 @@
   `tests/test_analysis_scan.py`, confirming both direct `load_tensors()` calls
   and the static-scan local-checkpoint path preserve the indexed-payload
   diagnostic unchanged without requiring a production code change.
+- Added `src/moe_surgeon/prune/apply.py` with a deterministic Gemma4 prune/apply
+  engine that validates full MoE-layer plan coverage, computes old-to-new
+  expert remaps, slices `experts.gate_up_proj`, `experts.down_proj`,
+  `router.proj.weight`, and `router.per_expert_scale` along the expert axis,
+  preserves non-MoE tensors as explicit passthrough inventory, binds
+  `PrunePlan` identity to the opened checkpoint, writes non-dry-run results to
+  a new derived checkpoint directory, and emits stable dry-run/apply audit
+  payloads with post-remap backend validation.
+- Exported the public prune/apply surface from `src/moe_surgeon/prune/__init__.py`
+  and added offline regression coverage in `tests/test_prune_apply.py` for the
+  required import path, deterministic dry-runs, remap correctness, pass-through
+  preservation, and plan/topology invariant failures.
+- Exposed backend-owned Gemma4 prune tensor helpers in
+  `src/moe_surgeon/models/gemma4.py` so apply code can resolve the exact MoE
+  rewrite keys and validate expected target shapes without duplicating private
+  `moe_intermediate_size` layout rules.
+- Reconciled the task ledger for the already-merged checkpoint-reader
+  regression covering indexed keys that point to an existing shard file whose
+  payload omits the indexed tensor; the regression remains in
+  `tests/test_models_checkpoints.py` and the root quality gate passes.
 - Hardened `src/moe_surgeon/repo_metrics.py` so missing repo-local
   `.supervisor/project.json` files now fail with a clean
   `MetricsConfigurationError` message instead of leaking a raw
