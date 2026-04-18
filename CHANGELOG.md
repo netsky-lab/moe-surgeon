@@ -30,10 +30,11 @@
   explicit caller-provided `PYTHONPATH` entries, and repo-root startup now
   chains to any `PYTHONPATH`-provided `sitecustomize.py` used by subprocess
   import probes.
-- Added the previously missing checkpoint-reader regressions for the post-open
-  payload-loss path, covering both the direct `load_tensors()` failure and the
-  static-scan local-checkpoint path so scan preserves the same indexed-payload
-  diagnostic unchanged when router tensor loading hits the rewritten shard.
+- Closed the remaining checkpoint-reader integration gap by adding post-open
+  payload-omission regressions in `tests/test_models_checkpoints.py` and
+  `tests/test_analysis_scan.py`, confirming both direct `load_tensors()` calls
+  and the static-scan local-checkpoint path preserve the indexed-payload
+  diagnostic unchanged without requiring a production code change.
 - Hardened `src/moe_surgeon/repo_metrics.py` so missing repo-local
   `.supervisor/project.json` files now fail with a clean
   `MetricsConfigurationError` message instead of leaking a raw
