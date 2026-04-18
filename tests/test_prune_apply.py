@@ -178,8 +178,18 @@ def test_apply_prune_plan_dry_run_is_deterministic_and_reports_remap(tmp_path: P
         "model.language_model.layers.0.router.per_expert_scale",
         "model.language_model.layers.0.router.proj.weight",
     )
+    assert first.rewritten_tensor_mapping == {
+        "model.language_model.layers.0.experts.down_proj": "model.language_model.layers.0.experts.down_proj",
+        "model.language_model.layers.0.experts.gate_up_proj": "model.language_model.layers.0.experts.gate_up_proj",
+        "model.language_model.layers.0.router.per_expert_scale": "model.language_model.layers.0.router.per_expert_scale",
+        "model.language_model.layers.0.router.proj.weight": "model.language_model.layers.0.router.proj.weight",
+    }
     assert "model.language_model.layers.0.router.scale" in first.passthrough_tensor_keys
     assert "model.embed_tokens.weight" in first.passthrough_tensor_keys
+    assert first.passthrough_tensor_mapping["model.language_model.layers.0.router.scale"] == (
+        "model.language_model.layers.0.router.scale"
+    )
+    assert first.passthrough_tensor_mapping["model.embed_tokens.weight"] == "model.embed_tokens.weight"
 
 
 def test_apply_prune_plan_accepts_planner_produced_default_model_signature(tmp_path: Path) -> None:
@@ -410,6 +420,27 @@ def test_apply_prune_plan_rejects_missing_plan_layer_coverage(tmp_path: Path) ->
     assert "missing_layer_indices=0" in str(exc_info.value)
 
 
+def test_apply_prune_plan_rejects_duplicate_plan_layer_coverage(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    plan.per_layer_plans = (
+        *plan.per_layer_plans,
+        PrunePlanItem(
+            layer_index=0,
+            keep_indices=(0, 1),
+            drop_indices=(2, 3),
+            source_expert_count=4,
+            target_expert_count=2,
+            expected_expert_count=4,
+        ),
+    )
+
+    with pytest.raises(TopologyMismatchError, match="duplicate MoE layer coverage") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "duplicate_layer_indices=0" in str(exc_info.value)
+
+
 def test_apply_prune_plan_rejects_plan_expert_count_mismatch(tmp_path: Path) -> None:
     _write_checkpoint(tmp_path)
     plan = _plan()
@@ -420,7 +451,32 @@ def test_apply_prune_plan_rejects_plan_expert_count_mismatch(tmp_path: Path) -> 
         apply_prune_plan(tmp_path, plan=plan, dry_run=True)
 
     assert "plan_expert_count=3" in str(exc_info.value)
-    assert "layer_expert_count=4" in str(exc_info.value)
+
+
+def test_apply_prune_plan_rechecks_mutated_source_and_expected_expert_counts(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    item = plan.per_layer_plans[0]
+    item.source_expert_count = 999
+    item.expected_expert_count = 999
+
+    with pytest.raises(TopologyMismatchError, match="source_expert_count does not match layer topology") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "plan_source_expert_count=999" in str(exc_info.value)
+
+
+def test_apply_prune_plan_rejects_out_of_range_keep_indices_with_domain_error(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    plan = _plan()
+    item = plan.per_layer_plans[0]
+    item.keep_indices = (3, 99)
+    item.drop_indices = (0, 1)
+
+    with pytest.raises(TopologyMismatchError, match="expert indices must cover contiguous layer expert indices") as exc_info:
+        apply_prune_plan(tmp_path, plan=plan, dry_run=True)
+
+    assert "plan_indices=0,1,3,99" in str(exc_info.value)
 
 
 def test_apply_prune_plan_rejects_target_expert_count_below_top_k(tmp_path: Path) -> None:

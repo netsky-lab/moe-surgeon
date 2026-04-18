@@ -70,6 +70,8 @@ class ApplyResult:
     layer_reports: tuple[ApplyLayerReport, ...]
     rewritten_tensor_keys: tuple[str, ...]
     passthrough_tensor_keys: tuple[str, ...]
+    rewritten_tensor_mapping: Mapping[str, str]
+    passthrough_tensor_mapping: Mapping[str, str]
     derived_state_dict: Mapping[str, torch.Tensor] | None
     metadata: Mapping[str, SchemaKey]
 
@@ -87,6 +89,14 @@ class ApplyResult:
             "created_at": self.created_at,
             "rewritten_tensor_keys": list(self.rewritten_tensor_keys),
             "passthrough_tensor_keys": list(self.passthrough_tensor_keys),
+            "rewritten_tensor_mapping": [
+                [source_key, target_key]
+                for source_key, target_key in self.rewritten_tensor_mapping.items()
+            ],
+            "passthrough_tensor_mapping": [
+                [source_key, target_key]
+                for source_key, target_key in self.passthrough_tensor_mapping.items()
+            ],
             "model_handle": {
                 "model_id": self.model_handle.model_id,
                 "revision": self.model_handle.revision,
@@ -155,6 +165,14 @@ class ApplyResult:
             ],
             "rewritten_tensor_keys": list(self.rewritten_tensor_keys),
             "passthrough_tensor_keys": list(self.passthrough_tensor_keys),
+            "rewritten_tensor_mapping": [
+                [source_key, target_key]
+                for source_key, target_key in self.rewritten_tensor_mapping.items()
+            ],
+            "passthrough_tensor_mapping": [
+                [source_key, target_key]
+                for source_key, target_key in self.passthrough_tensor_mapping.items()
+            ],
             "metadata": dict(self.metadata),
         }
 
@@ -211,6 +229,8 @@ def apply_prune_plan(
     passthrough_tensor_keys = tuple(
         sorted(key for key in checkpoint.state_keys() if key not in rewritten_tensor_keys)
     )
+    rewritten_tensor_mapping = {tensor_key: tensor_key for tensor_key in rewritten_tensor_keys}
+    passthrough_tensor_mapping = {tensor_key: tensor_key for tensor_key in passthrough_tensor_keys}
 
     source_metadata_digest = _source_metadata_digest(checkpoint)
     model_handle = ModelHandle(
@@ -315,6 +335,10 @@ def apply_prune_plan(
             for report in layer_reports
         ],
         "rewritten_tensor_keys": list(rewritten_tensor_keys),
+        "rewritten_tensor_mapping": [[source_key, target_key] for source_key, target_key in rewritten_tensor_mapping.items()],
+        "passthrough_tensor_mapping": [
+            [source_key, target_key] for source_key, target_key in passthrough_tensor_mapping.items()
+        ],
         "metadata": metadata,
     }
     apply_id = f"apply-{sha256(to_json(apply_seed).encode('utf-8')).hexdigest()[:16]}"
@@ -332,6 +356,8 @@ def apply_prune_plan(
         layer_reports=layer_reports,
         rewritten_tensor_keys=rewritten_tensor_keys,
         passthrough_tensor_keys=passthrough_tensor_keys,
+        rewritten_tensor_mapping=rewritten_tensor_mapping,
+        passthrough_tensor_mapping=passthrough_tensor_mapping,
         derived_state_dict=derived_state_dict,
         metadata=metadata,
     )
@@ -504,7 +530,16 @@ def _validate_plan_against_topology(
     model_id: str,
 ) -> Mapping[int, PrunePlanItem]:
     expected_layers = {layer.layer_index for layer in topology}
-    plan_items = {item.layer_index: item for item in sort_plan_items(plan.per_layer_plans)}
+    sorted_plan_items = sort_plan_items(plan.per_layer_plans)
+    duplicate_layers = _duplicate_layer_indices(sorted_plan_items)
+    if duplicate_layers:
+        raise TopologyMismatchError(
+            "prune plan contains duplicate MoE layer coverage",
+            model_id=model_id,
+            layer_index=duplicate_layers[0],
+            details={"duplicate_layer_indices": ",".join(str(index) for index in duplicate_layers)},
+        )
+    plan_items = {item.layer_index: item for item in sorted_plan_items}
     missing_layers = tuple(sorted(expected_layers.difference(plan_items)))
     unknown_layers = tuple(sorted(set(plan_items).difference(expected_layers)))
     if unknown_layers:
@@ -523,6 +558,7 @@ def _validate_plan_against_topology(
         )
     for layer in topology:
         item = plan_items[layer.layer_index]
+        _validate_plan_item_counts(item, layer=layer, model_id=model_id)
         if len(item.keep_indices) + len(item.drop_indices) != layer.expert_count:
             raise TopologyMismatchError(
                 "prune plan expert count does not match layer topology",
@@ -543,7 +579,86 @@ def _validate_plan_against_topology(
                     "layer_top_k": layer.top_k,
                 },
             )
+        _validate_plan_item_indices(item, layer=layer, model_id=model_id)
     return plan_items
+
+
+def _duplicate_layer_indices(plan_items: Sequence[PrunePlanItem]) -> tuple[int, ...]:
+    seen: set[int] = set()
+    duplicates: set[int] = set()
+    for item in plan_items:
+        if item.layer_index in seen:
+            duplicates.add(item.layer_index)
+        seen.add(item.layer_index)
+    return tuple(sorted(duplicates))
+
+
+def _validate_plan_item_counts(
+    item: PrunePlanItem,
+    *,
+    layer: LayerTopology,
+    model_id: str,
+) -> None:
+    if item.source_expert_count is not None and item.source_expert_count != layer.expert_count:
+        raise TopologyMismatchError(
+            "prune plan source_expert_count does not match layer topology",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+            details={
+                "plan_source_expert_count": item.source_expert_count,
+                "layer_expert_count": layer.expert_count,
+            },
+        )
+    if item.expected_expert_count is not None and item.expected_expert_count != layer.expert_count:
+        raise TopologyMismatchError(
+            "prune plan expected_expert_count does not match layer topology",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+            details={
+                "plan_expected_expert_count": item.expected_expert_count,
+                "layer_expert_count": layer.expert_count,
+            },
+        )
+
+
+def _validate_plan_item_indices(
+    item: PrunePlanItem,
+    *,
+    layer: LayerTopology,
+    model_id: str,
+) -> None:
+    keep = tuple(item.keep_indices)
+    drop = tuple(item.drop_indices)
+    if len(set(keep)) != len(keep):
+        raise TopologyMismatchError(
+            "prune plan keep_indices must be unique",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+        )
+    if len(set(drop)) != len(drop):
+        raise TopologyMismatchError(
+            "prune plan drop_indices must be unique",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+        )
+    if set(keep) & set(drop):
+        raise TopologyMismatchError(
+            "prune plan keep_indices and drop_indices must be disjoint",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+        )
+    combined = tuple(sorted(keep + drop))
+    expected = tuple(range(layer.expert_count))
+    if combined != expected:
+        raise TopologyMismatchError(
+            "prune plan expert indices must cover contiguous layer expert indices",
+            model_id=model_id,
+            layer_index=layer.layer_index,
+            details={
+                "plan_indices": ",".join(str(index) for index in combined),
+                "expected_indices": ",".join(str(index) for index in expected),
+            },
+        )
 
 
 def _build_layer_reports(
