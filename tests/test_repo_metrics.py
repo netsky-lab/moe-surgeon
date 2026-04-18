@@ -108,10 +108,25 @@ def _write_quality_gate_fixture_repo(
     repo_root = Path(__file__).resolve().parents[1]
     src_dir = root / "src"
     src_dir.mkdir(parents=True, exist_ok=True)
+    package_dir = src_dir / "moe_surgeon"
+    package_dir.mkdir(parents=True, exist_ok=True)
     (src_dir / "sitecustomize.py").write_text(
         (repo_root / "src" / "sitecustomize.py").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (package_dir / "__init__.py").write_text(
+        (repo_root / "src" / "moe_surgeon" / "__init__.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (package_dir / "test_env.py").write_text(
+        (repo_root / "src" / "moe_surgeon" / "test_env.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (package_dir / "repo_metrics.py").write_text(
+        (repo_root / "src" / "moe_surgeon" / "repo_metrics.py").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (root / "AGENTS.md").write_text("# Fixture AGENTS\n", encoding="utf-8")
     (root / "pyproject.toml").write_text(
         """
 [tool.mypy]
@@ -124,6 +139,7 @@ addopts = ["--disable-plugin-autoload", "--basetemp=.tmp/pytest"]
         + "\n",
         encoding="utf-8",
     )
+    _write_project_json(root, include_verify_config=include_supervisor_config)
     (root / "sample.py").write_text(
         """
 def answer() -> int:
@@ -161,6 +177,7 @@ def test_bootstrap_tempdir() -> None:
     if include_supervisor_config:
         _write_project_json(
             root,
+            include_verify_config=True,
             lint_command="python -m ruff check sample.py tests",
             typecheck_command="python -m mypy sample.py",
             test_command="python -m pytest tests/test_sample.py -q",

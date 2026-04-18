@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Fixed the hostile-temp quality-gate fixture in `tests/test_repo_metrics.py`
+  so the copied startup hook sees the same repo-root sentinel files as the
+  real project and reliably creates `.tmp/system` during direct and
+  repo-metrics test runs.
 - Restored the tracked local safetensors checkpoint reader in
   `src/moe_surgeon/models/checkpoints.py` and restored
   `tests/test_models_checkpoints.py` in this worktree.
