@@ -16,8 +16,8 @@ from moe_surgeon.__main__ import main as module_main
 from moe_surgeon.cli.main import cli
 from moe_surgeon.models.backend import LoadedBackendBundle
 from moe_surgeon.schemas import ModelHandle
-from test_prune_apply import _write_checkpoint
-from test_runtime_profiler import FakeBackend, FakeRouterModule, FakeTokenizer, _router_state
+from tests.test_prune_apply import _write_checkpoint
+from tests.test_runtime_profiler import FakeBackend, FakeRouterModule, FakeTokenizer, _router_state
 
 FORBIDDEN_RUNTIME_MODULES = ("torch", "transformers", "safetensors")
 

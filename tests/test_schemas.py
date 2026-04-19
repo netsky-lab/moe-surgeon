@@ -336,6 +336,31 @@ def test_from_dict_coerces_prune_plan_model_handle_payload() -> None:
     assert plan.model_handle.model_id == "abc"
 
 
+def test_prune_plan_json_round_trip_preserves_mapping_payloads() -> None:
+    plan = PrunePlan(
+        plan_id="plan-map",
+        model_signature="tiny",
+        model_handle=ModelHandle(model_id="tests/tiny-gemma-like", seed=7),
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(0, 1),
+                drop_indices=(2, 3),
+                source_expert_count=4,
+                metadata={"budget": 2},
+            ),
+        ),
+        constraints={"global_target_experts": 2, "min_experts_per_layer": 1},
+        metadata={"candidate_digest": "abc123"},
+    )
+
+    restored = from_json(to_json(plan))
+
+    assert restored == plan
+    assert restored.constraints == {"global_target_experts": 2, "min_experts_per_layer": 1}
+    assert restored.metadata == {"candidate_digest": "abc123"}
+
+
 def test_from_json_rejects_unknown_schema_type() -> None:
     with pytest.raises(SchemaValidationError, match="Unsupported __schema_type"):
         from_json('{"__schema_type":"UnknownSchema","value":1}')

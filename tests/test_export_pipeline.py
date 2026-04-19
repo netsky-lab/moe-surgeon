@@ -15,7 +15,7 @@ from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
 from moe_surgeon.schemas import ModelHandle
 
-from test_prune_apply import _plan, _write_checkpoint, _write_sharded_checkpoint
+from tests.test_prune_apply import _plan, _write_checkpoint, _write_sharded_checkpoint
 
 
 def _sha256_file(path: Path) -> str:

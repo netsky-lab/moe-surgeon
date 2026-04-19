@@ -80,10 +80,30 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 ## Safety and reproducibility policy
 
 - Never mutate source checkpoints.
+- No checkpoint mutation is allowed under any command path.
 - Write all outputs to a new artifact path.
 - Validate expert index mapping before and after prune operations.
 - Deterministic sorting and stable serialization for all manifests.
 - Strict shape diagnostics before write-back.
+
+## Deterministic test baseline
+
+- Deterministic offline fixtures live under `tests/fixtures/` and model a tiny
+  Gemma4-like MoE backend for scan, bench, planning, and export contract tests.
+- Test artifacts use fixed seeds, canonical JSON payloads, and stable tensor
+  values so regression checks stay byte-stable across repeated local runs.
+- The default suite remains offline; live Hugging Face-backed runtime coverage
+  stays behind the explicit `integration` marker.
+
+## Known limitations
+
+- The offline fixture backend validates contracts and chaining behavior, but it
+  is not a substitute for real Gemma4 numerical parity or performance checks.
+- Export and apply paths fail fast on topology or shape mismatches rather than
+  attempting partial fallback repair.
+- Runtime profiling coverage is intentionally split: offline tests assert
+  deterministic aggregation and CLI plumbing, while live execution still
+  depends on an explicitly selected compatible Transformers environment.
 
 ## CLI bootstrap
 

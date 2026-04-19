@@ -26,14 +26,17 @@ Before touching architecture or implementation decisions, read:
 - Keep packages isolated by concern: cli/, models/, analysis/, runtime/, prune/, export/.
 - No hidden mutation of model checkpoints.
 - Deterministic behavior is mandatory: fixed seed support, stable sorting, canonical JSON serialization.
+- Deterministic fixtures and stable tensor payloads are required for offline tests.
 
 ## Safety and correctness rules
 
 - Never mutate source checkpoint files in place.
+- No checkpoint mutation, including temporary in-place rewrites during tests or export staging.
 - Always write outputs to a new directory.
 - Fail fast on unsupported topology or shape mismatch.
 - Preserve pre-prune metadata snapshots for auditability.
 - Validate expert remaps before and after pruning; include detailed diagnostics.
+- Safe fallback behavior means refusing unsupported or malformed inputs with explicit domain errors instead of silently skipping validation.
 
 ## Error design
 

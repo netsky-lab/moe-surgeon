@@ -397,6 +397,19 @@
 - Added `ArtifactValidationError` in `src/moe_surgeon/models/errors.py` plus a shared `resolve_deterministic_seed()` helper in `src/moe_surgeon/schemas.py` so command handlers can reject conflicting workflow seeds and preserve reproducible run-manifest metadata.
 - Expanded `tests/test_cli.py` and `tests/test_schemas.py` with regressions covering pre-existing output-path rejection, seed-conflict failures, backend mismatch diagnostics, and deterministic seed helper behavior.
 
+## 2026-04-19
+- Added a tracked `tests` package scaffold with `tests/fixtures/tiny_gemma_like.py`,
+  reusable tiny MoE backend/tensor fixtures, and shared pytest fixtures in
+  `tests/conftest.py` for deterministic offline scan, bench, and planning
+  coverage.
+- Added focused regression files `tests/test_backend_registry.py`,
+  `tests/test_prune_strategy.py`, `tests/test_cli_flow.py`, and
+  `tests/test_export_manifest.py`, and extended `tests/test_schemas.py` with a
+  prune-plan mapping round-trip case.
+- Updated README, AGENTS, ROADMAP, and ARCHITECTURE with explicit Deterministic
+  testing guidance, No checkpoint mutation policy, fail-fast shape-validation
+  expectations, and current offline-vs-integration limitations.
+
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
   tracked symlinks outside the `.tmp/` quarantine.

@@ -106,6 +106,18 @@ layouts before any output is materialized.
 
 Analysis and runtime modules never mutate weights.
 
+## Test architecture
+
+- `tests/fixtures/tiny_gemma_like.py` provides a deterministic tiny Gemma4-like
+  backend, tensor payloads, and scan/bench/planning fixtures for offline
+  contract coverage.
+- CLI flow and export-manifest tests use those stable contracts to verify
+  artifact chaining, seed propagation, and manifest linkage without depending
+  on live downloads.
+- Safe fallback behavior is architectural: unsupported topology, backend
+  mismatch, or shape violations must raise explicit domain errors instead of
+  producing partial artifacts.
+
 ## Design decisions
 
 1. Schema-first: all modules exchange typed contracts for decoupling and reproducibility.
