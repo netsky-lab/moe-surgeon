@@ -346,6 +346,14 @@
   Python process started from this repo imports `moe_surgeon.analysis.scan`
   from the current checkout's `src/` tree.
 
+## 2026-04-19
+- Expanded P11 unit hardening in `tests/test_schemas.py`,
+  `tests/test_backend_registry.py`, and `tests/test_prune_strategy.py` with
+  offline regressions covering canonical prune-plan file serialization,
+  backend-registry constructor ordering and invalid `supports()` diagnostics,
+  deterministic router-mass candidate ranking, and resolved planner-budget
+  constraint flattening.
+
 ## 2026-04-17
 - Made the direct quality gates hermetic across tempdir- and
   cache-constrained environments by adding an installed `src/sitecustomize.py`

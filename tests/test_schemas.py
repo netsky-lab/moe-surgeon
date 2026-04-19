@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from moe_surgeon.schemas import (
@@ -22,6 +24,8 @@ from moe_surgeon.schemas import (
     validate_shape_tuple,
     validate_layer_ref,
     resolve_deterministic_seed,
+    to_json_file,
+    from_json_file,
 )
 
 
@@ -434,6 +438,36 @@ def test_prune_plan_json_is_stable_across_constraint_mapping_order() -> None:
     )
 
     assert to_json(left) == to_json(right)
+
+
+def test_prune_plan_file_round_trip_preserves_canonical_json(tmp_path: Path) -> None:
+    plan = PrunePlan(
+        plan_id="plan-file",
+        model_signature="tiny",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0, 2),
+                drop_indices=(1, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(1,),
+                drop_indices=(0, 2, 3),
+                source_expert_count=4,
+            ),
+        ),
+        constraints={"global_target_experts": 3, "min_experts_per_layer": 1},
+        metadata={"candidate_digest": "abc123", "constraint_digest": "def456"},
+    )
+    output_path = tmp_path / "prune-plan.json"
+
+    written = to_json_file(output_path, plan)
+    restored = from_json_file(written)
+
+    assert restored == plan
+    assert written.read_text(encoding="utf-8") == to_json(plan)
 
 
 def test_from_json_rejects_unknown_schema_type() -> None:

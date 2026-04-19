@@ -6,6 +6,7 @@ from moe_surgeon.models.errors import TopologyMismatchError
 from moe_surgeon.prune.planner import (
     LayerConstraintOverride,
     PlannerConstraints,
+    _layer_budgets,
     build_prune_plan,
     validate_planner_inputs,
 )
@@ -68,6 +69,25 @@ def test_combined_strategy_and_plan_json_are_deterministic_with_fixed_fixture_se
     assert first.model_handle.seed == 7
     assert first.global_target_experts == 3
     assert [item.keep_indices for item in first.per_layer_plans] == [(0, 1), (1,)]
+
+
+def test_router_mass_strategy_is_deterministic_for_reordered_inputs() -> None:
+    strategy = create_strategy("router_mass")
+    topology = tuple(reversed(tiny_topology()))
+    expert_stats = tuple(reversed(tiny_expert_stats()))
+
+    first = strategy.build_candidates(topology, expert_stats=expert_stats)
+    second = strategy.build_candidates(topology, expert_stats=expert_stats)
+
+    assert first == second
+    assert [(candidate.layer_index, candidate.expert_index) for candidate in first[:4]] == [
+        (0, 0),
+        (1, 1),
+        (1, 0),
+        (1, 2),
+    ]
+    assert first[0].score_components["static_gate_share"] == pytest.approx(0.60)
+    assert first[1].score_components["static_gate_share"] == pytest.approx(0.40)
 
 
 def test_validate_planner_inputs_rejects_layer_override_outside_topology() -> None:
@@ -134,3 +154,49 @@ def test_planner_constraints_and_plan_output_are_stable_across_override_mapping_
 
     assert to_json(left) == to_json(right)
     assert left.constraints == right.constraints
+
+
+def test_planner_constraints_resolve_exact_layer_budgets_deterministically() -> None:
+    topology = tiny_topology()
+    constraints = PlannerConstraints(
+        global_target_experts=4,
+        min_experts_per_layer=1,
+        max_experts_per_layer=3,
+        layer_overrides={
+            1: LayerConstraintOverride(target_experts=1),
+            0: LayerConstraintOverride(min_experts=2),
+        },
+    )
+
+    budgets = _layer_budgets(topology, constraints)
+    flattened = constraints.plan_constraints(budgets, global_target_experts=4)
+
+    assert [(budget.layer.layer_index, budget.minimum_keep, budget.maximum_keep) for budget in budgets] == [
+        (0, 2, 3),
+        (1, 1, 1),
+    ]
+    assert flattened == {
+        "min_experts_per_layer": 1,
+        "global_target_experts": 4,
+        "max_experts_per_layer": 3,
+        "layer_0_min_experts": 2,
+        "layer_1_target_experts": 1,
+    }
+
+
+def test_build_prune_plan_rejects_global_target_below_resolved_minimum() -> None:
+    with pytest.raises(ValueError, match="below required minimum 4"):
+        build_prune_plan(
+            tiny_topology(),
+            strategy="combined",
+            expert_stats=tiny_expert_stats(),
+            activation_stats=tiny_activation_stats(),
+            constraints=PlannerConstraints(
+                global_target_experts=3,
+                min_experts_per_layer=1,
+                layer_overrides={
+                    0: LayerConstraintOverride(min_experts=2),
+                    1: LayerConstraintOverride(min_experts=2),
+                },
+            ),
+        )
