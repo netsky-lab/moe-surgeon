@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from moe_surgeon.schemas import (
@@ -18,9 +20,12 @@ from moe_surgeon.schemas import (
     from_json,
     sort_activation_stats,
     sort_experts,
+    sort_plan_items,
     validate_shape_tuple,
     validate_layer_ref,
     resolve_deterministic_seed,
+    to_json_file,
+    from_json_file,
 )
 
 
@@ -233,6 +238,37 @@ def test_sort_activation_stats_is_deterministic_by_layer_and_expert() -> None:
     assert [(item.layer_index, item.expert_index) for item in ordered] == [(1, 3), (2, 1)]
 
 
+def test_sort_plan_items_is_deterministic_for_unordered_plan_records() -> None:
+    ordered = sort_plan_items(
+        (
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(2, 0),
+                drop_indices=(1, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(1, 0),
+                drop_indices=(2, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0,),
+                drop_indices=(1, 2, 3),
+                source_expert_count=4,
+            ),
+        )
+    )
+
+    assert [(item.layer_index, item.ordered_keep_indices) for item in ordered] == [
+        (0, (1, 0)),
+        (1, (0,)),
+        (1, (2, 0)),
+    ]
+
+
 def test_deterministic_default_json_for_default_plan_instances() -> None:
     first = PrunePlan()
     second = PrunePlan()
@@ -334,6 +370,104 @@ def test_from_dict_coerces_prune_plan_model_handle_payload() -> None:
     )
     assert isinstance(plan.model_handle, ModelHandle)
     assert plan.model_handle.model_id == "abc"
+
+
+def test_prune_plan_json_round_trip_preserves_mapping_payloads() -> None:
+    plan = PrunePlan(
+        plan_id="plan-map",
+        model_signature="tiny",
+        model_handle=ModelHandle(model_id="tests/tiny-gemma-like", seed=7),
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(0, 1),
+                drop_indices=(2, 3),
+                source_expert_count=4,
+                metadata={"budget": 2},
+            ),
+        ),
+        constraints={"global_target_experts": 2, "min_experts_per_layer": 1},
+        metadata={"candidate_digest": "abc123"},
+    )
+
+    restored = from_json(to_json(plan))
+
+    assert restored == plan
+    assert restored.constraints == {"global_target_experts": 2, "min_experts_per_layer": 1}
+    assert restored.metadata == {"candidate_digest": "abc123"}
+
+
+def test_prune_plan_json_is_stable_across_constraint_mapping_order() -> None:
+    left = PrunePlan(
+        plan_id="plan-constraints",
+        model_signature="tiny",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0,),
+                drop_indices=(1, 2, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(0, 1),
+                drop_indices=(2, 3),
+                source_expert_count=4,
+            ),
+        ),
+        constraints={"min_experts_per_layer": 1, "global_target_experts": 3},
+    )
+    right = PrunePlan(
+        plan_id="plan-constraints",
+        model_signature="tiny",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(0, 1),
+                drop_indices=(2, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0,),
+                drop_indices=(1, 2, 3),
+                source_expert_count=4,
+            ),
+        ),
+        constraints={"global_target_experts": 3, "min_experts_per_layer": 1},
+    )
+
+    assert to_json(left) == to_json(right)
+
+
+def test_prune_plan_file_round_trip_preserves_canonical_json(tmp_path: Path) -> None:
+    plan = PrunePlan(
+        plan_id="plan-file",
+        model_signature="tiny",
+        per_layer_plans=(
+            PrunePlanItem(
+                layer_index=1,
+                keep_indices=(0, 2),
+                drop_indices=(1, 3),
+                source_expert_count=4,
+            ),
+            PrunePlanItem(
+                layer_index=0,
+                keep_indices=(1,),
+                drop_indices=(0, 2, 3),
+                source_expert_count=4,
+            ),
+        ),
+        constraints={"global_target_experts": 3, "min_experts_per_layer": 1},
+        metadata={"candidate_digest": "abc123", "constraint_digest": "def456"},
+    )
+    output_path = tmp_path / "prune-plan.json"
+
+    written = to_json_file(output_path, plan)
+    restored = from_json_file(written)
+
+    assert restored == plan
+    assert written.read_text(encoding="utf-8") == to_json(plan)
 
 
 def test_from_json_rejects_unknown_schema_type() -> None:

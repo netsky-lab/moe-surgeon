@@ -70,6 +70,10 @@
   byte-identical repeated exports, manifest linkage/provenance fields, and
   offline checkpoint reopen/topology validation for both single-file and
   sharded exports.
+- Hardened `README.md`, `AGENTS.md`, `ROADMAP.md`, and `ARCHITECTURE.md` with
+  explicit reproducibility rules, immutable artifact/checkpoint handling,
+  preflight and post-remap shape-validation requirements, safe-fallback domain
+  error policy, and current offline-versus-integration execution limits.
 - Audited the recently reconciled supervisor/task ledger entries so checkpoint
   reader delivery now stays attributed to `99534567` (`feat: restore local
   safetensors checkpoint reader`), targeted static-scan router-only reads stay
@@ -378,6 +382,14 @@
   Python process started from this repo imports `moe_surgeon.analysis.scan`
   from the current checkout's `src/` tree.
 
+## 2026-04-19
+- Expanded P11 unit hardening in `tests/test_schemas.py`,
+  `tests/test_backend_registry.py`, and `tests/test_prune_strategy.py` with
+  offline regressions covering canonical prune-plan file serialization,
+  backend-registry constructor ordering and invalid `supports()` diagnostics,
+  deterministic router-mass candidate ranking, and resolved planner-budget
+  constraint flattening.
+
 ## 2026-04-17
 - Made the direct quality gates hermetic across tempdir- and
   cache-constrained environments by adding an installed `src/sitecustomize.py`
@@ -425,7 +437,6 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-19
-<<<<<<< HEAD
 - Aligned `src/moe_surgeon/__init__.py` and
   `src/moe_surgeon/models/__init__.py` so the checked-in package descriptions
   explicitly name `src/moe_surgeon/models/checkpoints.py` as the offline
@@ -454,16 +465,34 @@
   and `src/moe_surgeon/models/__init__.py` so the checked-in source describes
   the same models/checkpoint-reader responsibility split asserted by the docs
   consistency harness.
-=======
+- Tightened the offline P11 integration coverage in `tests/test_cli_flow.py`
+  so the workflow now exercises the real `scan -> bench -> prune -> export`
+  CLI chain with a stubbed runtime backend, shared root-option plumbing, and
+  default `--artifact-root` path resolution instead of a synthetic bench file.
+- Hardened `tests/test_export_manifest.py` to validate export-manifest checksum
+  linkage back to the materialized apply artifact and to assert byte-stable
+  exports when reloading the on-disk apply artifact through the export runner.
+- Added targeted P11 regression coverage in `tests/test_schemas.py` and
+  `tests/test_prune_strategy.py` for deterministic `sort_plan_items()`
+  ordering plus prune-plan JSON stability when logically equivalent
+  constraint and plan-item mappings arrive in different orders.
 - Hardened CLI workflow preflight in `src/moe_surgeon/cli/main.py` with explicit artifact/output validation for scan, bench, prune, and export, deterministic seed resolution across chained artifacts, and clearer `error[code:domain]` command failures for artifact-preflight versus backend/topology issues.
 - Added `ArtifactValidationError` in `src/moe_surgeon/models/errors.py` plus a shared `resolve_deterministic_seed()` helper in `src/moe_surgeon/schemas.py` so command handlers can reject conflicting workflow seeds and preserve reproducible run-manifest metadata.
 - Expanded `tests/test_cli.py` and `tests/test_schemas.py` with regressions covering pre-existing output-path rejection, seed-conflict failures, backend mismatch diagnostics, and deterministic seed helper behavior.
-
-## 2026-04-19
 - Aligned the `--source-path` CLI contract in `src/moe_surgeon/cli/main.py` with the checkpoint loader by making the option directory-only and updating command diagnostics/help text to say "checkpoint directory" explicitly.
 - Added repo-local CLI regressions in `tests/test_cli.py` covering direct file rejection for `--source-path` plus `python -m moe_surgeon --help` and `python -m moe_surgeon scan --help`, with subprocesses forced to resolve this checkout's `src/` tree so the tested help contract matches the actual loader requirements.
 - Updated `README.md` so scan documentation now states that `--source-path` must point to a checkpoint directory containing `config.json` and safetensors weights.
->>>>>>> master
+- Added a tracked `tests` package scaffold with `tests/fixtures/tiny_gemma_like.py`,
+  reusable tiny MoE backend/tensor fixtures, and shared pytest fixtures in
+  `tests/conftest.py` for deterministic offline scan, bench, and planning
+  coverage.
+- Added focused regression files `tests/test_backend_registry.py`,
+  `tests/test_prune_strategy.py`, `tests/test_cli_flow.py`, and
+  `tests/test_export_manifest.py`, and extended `tests/test_schemas.py` with a
+  prune-plan mapping round-trip case.
+- Updated README, AGENTS, ROADMAP, and ARCHITECTURE with explicit Deterministic
+  testing guidance, No checkpoint mutation policy, fail-fast shape-validation
+  expectations, and current offline-vs-integration limitations.
 
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
