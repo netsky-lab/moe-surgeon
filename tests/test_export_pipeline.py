@@ -65,6 +65,30 @@ def test_run_export_rejects_dense_passthrough_topology_damage_before_writing(tmp
     assert not export_dir.exists()
 
 
+def test_run_export_rejects_config_inconsistent_dense_passthrough_width_before_writing(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_checkpoint(source_root)
+    applied = apply_prune_plan(source_root, plan=_plan(), dry_run=False, output_dir=tmp_path / "applied")
+    invalid_state = dict(applied.derived_state_dict or {})
+    invalid_state["model.language_model.layers.0.mlp.down_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.down_proj.weight"
+    ].new_zeros((3, 5))
+    invalid_state["model.language_model.layers.0.mlp.gate_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.gate_proj.weight"
+    ].new_zeros((5, 3))
+    invalid_state["model.language_model.layers.0.mlp.up_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.up_proj.weight"
+    ].new_zeros((5, 3))
+    invalid = replace(applied, derived_state_dict=invalid_state)
+    export_dir = tmp_path / "invalid-export"
+
+    with pytest.raises(ShapeInvariantViolationError, match="mlp.down_proj.weight shape mismatch"):
+        run_export(invalid, output_dir=export_dir)
+
+    assert not export_dir.exists()
+
+
 def test_run_export_is_byte_stable_across_repeated_runs(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()

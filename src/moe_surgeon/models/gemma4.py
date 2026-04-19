@@ -175,6 +175,7 @@ class Gemma4TopologyConfig:
     hidden_size: int
     num_experts: int
     top_k: int
+    intermediate_size: int | None
     moe_intermediate_size: int | None
     moe_layer_indices: tuple[int, ...]
     raw_config: Mapping[str, object]
@@ -716,6 +717,11 @@ class Gemma4Backend:
                 details={"top_k": top_k, "num_experts": num_experts},
             )
 
+        intermediate_size = self._optional_int(
+            text_config,
+            "intermediate_size",
+            model_id=model_id,
+        )
         moe_intermediate_size = self._optional_int(
             text_config,
             "moe_intermediate_size",
@@ -733,6 +739,7 @@ class Gemma4Backend:
             hidden_size=hidden_size,
             num_experts=num_experts,
             top_k=top_k,
+            intermediate_size=intermediate_size,
             moe_intermediate_size=moe_intermediate_size,
             moe_layer_indices=moe_layer_indices,
             raw_config=top_level,
@@ -1254,6 +1261,7 @@ class Gemma4Backend:
         *,
         layer: LayerTopology,
     ) -> None:
+        topology = self._parse_bundle_topology(bundle)
         tensor_keys = self.resolve_layer_tensor_keys(bundle, layer_index=layer.layer_index)
         state_index = self._state_index(bundle)
 
@@ -1274,7 +1282,7 @@ class Gemma4Backend:
                 actual_shape=down_proj_shape,
                 details={"expected_layout": "(hidden_size, intermediate_size)"},
             )
-        intermediate_size = down_proj_shape[1]
+        intermediate_size = topology.intermediate_size or down_proj_shape[1]
         self._validate_dense_tensor(
             down_proj_shape,
             bundle=bundle,

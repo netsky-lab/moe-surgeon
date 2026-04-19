@@ -9,7 +9,9 @@
   before write-out.
 - Extended `src/moe_surgeon/models/gemma4.py` bundle validation to check dense
   hybrid companion tensor shapes (`mlp.*` and feedforward layernorm weights)
-  alongside the existing router and expert invariants.
+  alongside the existing router and expert invariants, using
+  `text_config.intermediate_size` when available so config-inconsistent dense
+  widths are rejected even if the three MLP tensors stay mutually consistent.
 - Added regressions in `tests/test_export_pipeline.py` and
   `tests/test_models_gemma4.py` covering dense passthrough shape corruption and
   the corresponding backend/export failures.
