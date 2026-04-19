@@ -32,6 +32,7 @@ def write_export_manifest(
         run_id=export_result.export_id,
         command="export",
         model_handle=apply_result.model_handle,
+        seed=apply_result.model_handle.seed,
         input_checksums={
             "source_metadata_digest": apply_result.source_metadata_digest,
             "plan_canonical_digest": str(apply_result.metadata["plan_canonical_digest"]),

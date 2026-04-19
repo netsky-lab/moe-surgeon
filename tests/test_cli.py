@@ -383,6 +383,67 @@ def test_bench_command_rejects_conflicting_seed_from_scan_artifact(tmp_path: Pat
     assert "bench seed must be deterministic across CLI context and artifacts" in result.output
 
 
+def test_bench_command_maps_missing_scan_artifact_to_artifact_validation(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    missing_scan = tmp_path / "missing-scan.json"
+    result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "bench",
+            "--scan-artifact",
+            str(missing_scan),
+            "--prompt",
+            "alpha",
+            "--output",
+            str(tmp_path / "bench.json"),
+        ],
+    )
+
+    assert result.exit_code == 24
+    assert "error[24:artifact_validation]" in result.output
+    assert "scan artifact does not exist" in result.output
+
+
+def test_prune_command_maps_malformed_bench_artifact_to_artifact_validation(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(scan_path)])
+    assert scan_result.exit_code == 0, scan_result.output
+
+    malformed_bench_path = tmp_path / "bench.json"
+    malformed_bench_path.write_text("[]", encoding="utf-8")
+    result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "prune",
+            "--scan-artifact",
+            str(scan_path),
+            "--bench-artifact",
+            str(malformed_bench_path),
+            "--output-dir",
+            str(tmp_path / "prune"),
+            "--target-experts",
+            "2",
+        ],
+    )
+
+    assert result.exit_code == 24
+    assert "error[24:artifact_validation]" in result.output
+    assert "benchmark artifact payload must be a JSON object" in result.output
+
+
 def test_bench_command_rejects_runtime_backend_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     runner = CliRunner()
     checkpoint_root = tmp_path / "checkpoint"
@@ -575,3 +636,180 @@ def test_prune_and_export_commands_chain_artifacts(tmp_path: Path) -> None:
     )
     assert export_result.exit_code == 0, export_result.output
     assert (export_root / "run-manifest.json").is_file()
+
+
+def test_export_command_maps_malformed_apply_artifact_to_artifact_validation(tmp_path: Path) -> None:
+    runner = CliRunner()
+    apply_root = tmp_path / "apply"
+    apply_root.mkdir()
+    (apply_root / "apply-manifest.json").write_text("[]", encoding="utf-8")
+
+    result = runner.invoke(
+        cli,
+        [
+            "export",
+            "--apply-artifact-dir",
+            str(apply_root),
+            "--output-dir",
+            str(tmp_path / "export"),
+        ],
+    )
+
+    assert result.exit_code == 24
+    assert "error[24:artifact_validation]" in result.output
+    assert "apply manifest payload must be a JSON object" in result.output
+
+
+def test_prune_and_export_preserve_non_zero_seed_across_manifests(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(
+        cli,
+        ["--source-path", str(checkpoint_root), "--seed", "7", "scan", "--output", str(scan_path)],
+    )
+    assert scan_result.exit_code == 0, scan_result.output
+    scan_artifact = load_scan_artifact(scan_path)
+
+    bench_path = tmp_path / "bench.json"
+    bench_payload = {
+        "manifest": {
+            "__schema_type": "RunArtifactManifest",
+            "__schema_version": "1.0.0",
+            "run_id": "bench-test-seed",
+            "command": "bench",
+            "model_handle": scan_artifact.manifest.model_handle.to_dict(),
+            "top_k": 2,
+            "prompt_count": 1,
+            "seed": 7,
+            "prompt_set_hash": None,
+            "started_at": "1970-01-01T00:00:00+00:00",
+            "finished_at": None,
+            "input_checksums": {},
+            "output_paths": {},
+            "parent_artifacts": [],
+            "run_plan": None,
+            "metadata": {},
+        },
+        "topology": [layer.to_dict() for layer in scan_artifact.layers],
+        "activation_stats": [
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 0,
+                "token_count": 10,
+                "weighted_token_count": 8.0,
+                "mass_sum": 8.0,
+                "mean_weight": 0.8,
+                "entropy": 0.1,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 5.0,
+                "density": 0.5,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 1,
+                "token_count": 6,
+                "weighted_token_count": 5.0,
+                "mass_sum": 5.0,
+                "mean_weight": 0.83,
+                "entropy": 0.2,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 3.0,
+                "density": 0.3,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 2,
+                "token_count": 4,
+                "weighted_token_count": 3.0,
+                "mass_sum": 3.0,
+                "mean_weight": 0.75,
+                "entropy": 0.3,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 2.0,
+                "density": 0.2,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 3,
+                "token_count": 2,
+                "weighted_token_count": 1.0,
+                "mass_sum": 1.0,
+                "mean_weight": 0.5,
+                "entropy": 0.4,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 1.0,
+                "density": 0.1,
+                "metadata": {},
+            },
+        ],
+        "profiler_config": {"batch_size": 1},
+        "input_payload_hash": None,
+    }
+    bench_path.write_text(json.dumps(bench_payload), encoding="utf-8")
+
+    prune_root = tmp_path / "prune"
+    prune_result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "prune",
+            "--scan-artifact",
+            str(scan_path),
+            "--bench-artifact",
+            str(bench_path),
+            "--output-dir",
+            str(prune_root),
+            "--target-experts",
+            "2",
+        ],
+    )
+    assert prune_result.exit_code == 0, prune_result.output
+
+    apply_manifest = json.loads((prune_root / "applied-checkpoint" / "apply-manifest.json").read_text(encoding="utf-8"))
+    materialized_run_manifest = json.loads(
+        (prune_root / "applied-checkpoint" / "run-manifest.json").read_text(encoding="utf-8")
+    )
+    assert apply_manifest["model_handle"]["seed"] == 7
+    assert materialized_run_manifest["seed"] == 7
+    assert materialized_run_manifest["model_handle"]["seed"] == 7
+
+    export_root = tmp_path / "export"
+    export_result = runner.invoke(
+        cli,
+        [
+            "export",
+            "--apply-artifact-dir",
+            str(prune_root / "applied-checkpoint"),
+            "--output-dir",
+            str(export_root),
+        ],
+    )
+    assert export_result.exit_code == 0, export_result.output
+
+    exported_manifest = json.loads((export_root / "run-manifest.json").read_text(encoding="utf-8"))
+    assert exported_manifest["seed"] == 7
+    assert exported_manifest["model_handle"]["seed"] == 7

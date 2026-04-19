@@ -14,7 +14,7 @@ from moe_surgeon.runtime.profiler import (
     RouterActivationRecord,
     RouterCaptureCollector,
 )
-from moe_surgeon.models.errors import TopologyMismatchError
+from moe_surgeon.models.errors import ArtifactValidationError, TopologyMismatchError
 from moe_surgeon.schemas import ActivationStats, LayerTopology, RunArtifactManifest, from_json
 
 __all__ = [
@@ -37,25 +37,64 @@ def write_benchmark_artifact(path: str | Path, result: BenchmarkResult) -> Path:
     return result.write_json(path)
 
 
+def _load_artifact_payload(path: str | Path, *, artifact_name: str) -> dict[str, object]:
+    target = Path(path)
+    if not target.is_file():
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact does not exist",
+            details={"artifact_path": str(target)},
+        )
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact must contain valid JSON",
+            details={"artifact_path": str(target)},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact payload must be a JSON object",
+            details={"artifact_path": str(target)},
+        )
+    return payload
+
+
 def load_benchmark_artifact(path: str | Path) -> BenchmarkResult:
     """Load a persisted benchmark artifact from disk."""
 
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise TypeError("benchmark artifact payload must be a JSON object")
-    manifest = from_json(payload["manifest"])
-    if not isinstance(manifest, RunArtifactManifest):
-        raise TypeError("benchmark artifact manifest must be RunArtifactManifest")
-    topology = tuple(
-        item for item in (from_json(layer_payload) for layer_payload in payload["topology"]) if isinstance(item, LayerTopology)
-    )
-    activation_stats = tuple(
-        item
-        for item in (from_json(stat_payload) for stat_payload in payload["activation_stats"])
-        if isinstance(item, ActivationStats)
-    )
-    profiler_config = payload.get("profiler_config", {})
-    input_payload_hash = payload.get("input_payload_hash")
+    payload = _load_artifact_payload(path, artifact_name="benchmark")
+    try:
+        manifest_payload = payload["manifest"]
+        if not isinstance(manifest_payload, dict):
+            raise ArtifactValidationError("benchmark artifact manifest payload must be a JSON object")
+        manifest = from_json(manifest_payload)
+        if not isinstance(manifest, RunArtifactManifest):
+            raise ArtifactValidationError("benchmark artifact manifest must be RunArtifactManifest")
+
+        topology_payload = payload["topology"]
+        activation_stats_payload = payload["activation_stats"]
+        profiler_config = payload.get("profiler_config", {})
+        input_payload_hash = payload.get("input_payload_hash")
+        if not isinstance(topology_payload, list):
+            raise ArtifactValidationError("benchmark artifact topology must be a JSON array")
+        if not isinstance(activation_stats_payload, list):
+            raise ArtifactValidationError("benchmark artifact activation_stats must be a JSON array")
+        if not isinstance(profiler_config, dict):
+            raise ArtifactValidationError("benchmark artifact profiler_config must be a JSON object")
+
+        topology = tuple(from_json(layer_payload) for layer_payload in topology_payload)
+        if not all(isinstance(item, LayerTopology) for item in topology):
+            raise ArtifactValidationError("benchmark artifact topology contains malformed entries")
+        activation_stats = tuple(from_json(stat_payload) for stat_payload in activation_stats_payload)
+        if not all(isinstance(item, ActivationStats) for item in activation_stats):
+            raise ArtifactValidationError("benchmark artifact activation_stats contain malformed entries")
+    except ArtifactValidationError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArtifactValidationError(
+            "benchmark artifact payload is malformed",
+            details={"artifact_path": str(Path(path))},
+        ) from exc
     result = BenchmarkResult(
         manifest=manifest,
         topology=topology,

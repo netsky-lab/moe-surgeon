@@ -723,7 +723,13 @@ def _run_prune(request: PruneCommandRequest) -> int:
     )
     plan_path = write_prune_plan(output_root / "prune-plan.json", plan)
     apply_artifact_dir = output_root / "applied-checkpoint"
-    apply_result = apply_prune_plan(source_path, plan=plan, dry_run=False, output_dir=apply_artifact_dir)
+    apply_result = apply_prune_plan(
+        source_path,
+        plan=plan,
+        dry_run=False,
+        output_dir=apply_artifact_dir,
+        seed=resolved_seed,
+    )
 
     prune_manifest = RunArtifactManifest(
         run_id=f"prune-{plan.plan_id}",

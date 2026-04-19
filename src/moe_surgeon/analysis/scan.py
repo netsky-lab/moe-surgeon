@@ -17,7 +17,7 @@ from moe_surgeon.models.checkpoints import (
     LocalSafetensorsCheckpoint,
     open_local_safetensors_checkpoint,
 )
-from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
+from moe_surgeon.models.errors import ArtifactValidationError, ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.schemas import (
     ActivationStats,
     ExpertStats,
@@ -377,32 +377,76 @@ def write_scan_artifact(path: str | Path, result: StaticScanResult, *, compact: 
     return target
 
 
+def _load_artifact_payload(path: str | Path, *, artifact_name: str) -> dict[str, object]:
+    target = Path(path)
+    if not target.is_file():
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact does not exist",
+            details={"artifact_path": str(target)},
+        )
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact must contain valid JSON",
+            details={"artifact_path": str(target)},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArtifactValidationError(
+            f"{artifact_name} artifact payload must be a JSON object",
+            details={"artifact_path": str(target)},
+        )
+    return payload
+
+
 def load_scan_artifact(path: str | Path) -> StaticScanResult:
     """Load a persisted static scan artifact from disk."""
 
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise TopologyMismatchError("scan artifact payload must be a JSON object")
-    manifest = from_json(payload["manifest"])
-    if not isinstance(manifest, RunArtifactManifest):
-        raise TopologyMismatchError("scan artifact manifest must be RunArtifactManifest")
-    layers = tuple(
-        item for item in (from_json(layer_payload) for layer_payload in payload["layers"]) if isinstance(item, LayerTopology)
-    )
-    router_states = tuple(
-        item
-        for item in (from_json(state_payload) for state_payload in payload["router_states"])
-        if isinstance(item, RouterState)
-    )
-    expert_stats = tuple(
-        item
-        for item in (from_json(stat_payload) for stat_payload in payload["expert_stats"])
-        if isinstance(item, ExpertStats)
-    )
-    layer_summaries = tuple(
-        RouterMetricSummary(**summary_payload) for summary_payload in payload["layer_summaries"]
-    )
-    aggregate_summary = StaticScanAggregateSummary(**payload["aggregate_summary"])
+    payload = _load_artifact_payload(path, artifact_name="scan")
+    try:
+        manifest_payload = payload["manifest"]
+        if not isinstance(manifest_payload, dict):
+            raise ArtifactValidationError("scan artifact manifest payload must be a JSON object")
+        manifest = from_json(manifest_payload)
+        if not isinstance(manifest, RunArtifactManifest):
+            raise ArtifactValidationError("scan artifact manifest must be RunArtifactManifest")
+
+        layers_payload = payload["layers"]
+        router_states_payload = payload["router_states"]
+        expert_stats_payload = payload["expert_stats"]
+        layer_summaries_payload = payload["layer_summaries"]
+        aggregate_summary_payload = payload["aggregate_summary"]
+        if not isinstance(layers_payload, list):
+            raise ArtifactValidationError("scan artifact layers must be a JSON array")
+        if not isinstance(router_states_payload, list):
+            raise ArtifactValidationError("scan artifact router_states must be a JSON array")
+        if not isinstance(expert_stats_payload, list):
+            raise ArtifactValidationError("scan artifact expert_stats must be a JSON array")
+        if not isinstance(layer_summaries_payload, list):
+            raise ArtifactValidationError("scan artifact layer_summaries must be a JSON array")
+        if not isinstance(aggregate_summary_payload, dict):
+            raise ArtifactValidationError("scan artifact aggregate_summary must be a JSON object")
+
+        layers = tuple(from_json(layer_payload) for layer_payload in layers_payload)
+        if not all(isinstance(item, LayerTopology) for item in layers):
+            raise ArtifactValidationError("scan artifact layers contain malformed entries")
+        router_states = tuple(from_json(state_payload) for state_payload in router_states_payload)
+        if not all(isinstance(item, RouterState) for item in router_states):
+            raise ArtifactValidationError("scan artifact router_states contain malformed entries")
+        expert_stats = tuple(from_json(stat_payload) for stat_payload in expert_stats_payload)
+        if not all(isinstance(item, ExpertStats) for item in expert_stats):
+            raise ArtifactValidationError("scan artifact expert_stats contain malformed entries")
+        layer_summaries = tuple(
+            RouterMetricSummary(**summary_payload) for summary_payload in layer_summaries_payload
+        )
+        aggregate_summary = StaticScanAggregateSummary(**aggregate_summary_payload)
+    except ArtifactValidationError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArtifactValidationError(
+            "scan artifact payload is malformed",
+            details={"artifact_path": str(Path(path))},
+        ) from exc
     result = StaticScanResult(
         layers=layers,
         router_states=router_states,
