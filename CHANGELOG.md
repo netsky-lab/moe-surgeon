@@ -401,6 +401,15 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-19
+- Tightened the offline P11 integration coverage in `tests/test_cli_flow.py`
+  so the workflow now exercises the real `scan -> bench -> prune -> export`
+  CLI chain with a stubbed runtime backend, shared root-option plumbing, and
+  default `--artifact-root` path resolution instead of a synthetic bench file.
+- Hardened `tests/test_export_manifest.py` to validate export-manifest checksum
+  linkage back to the materialized apply artifact and to assert byte-stable
+  exports when reloading the on-disk apply artifact through the export runner.
+
+## 2026-04-19
 - Added targeted P11 regression coverage in `tests/test_schemas.py` and
   `tests/test_prune_strategy.py` for deterministic `sort_plan_items()`
   ordering plus prune-plan JSON stability when logically equivalent
