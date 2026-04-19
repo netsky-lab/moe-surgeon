@@ -291,6 +291,10 @@ def test_apply_prune_plan_materializes_remapped_tensors_and_preserves_passthroug
     assert result.output_checkpoint_dir == str(output_dir.resolve())
     assert (output_dir / "config.json").is_file()
     assert (output_dir / "model.safetensors").is_file()
+    assert (output_dir / "apply-manifest.json").is_file()
+    assert (output_dir / "apply-audit.json").is_file()
+    assert (output_dir / "run-manifest.json").is_file()
+    assert (output_dir / "SHA256SUMS").is_file()
     derived = result.derived_state_dict
     written = load_file(str(output_dir / "model.safetensors"))
     keep = torch.tensor([3, 1], dtype=torch.long)
@@ -397,8 +401,17 @@ def test_apply_prune_plan_materializes_from_sharded_checkpoint(tmp_path: Path) -
 
     assert result.output_checkpoint_dir == str(output_dir.resolve())
     assert (output_dir / "config.json").is_file()
-    assert (output_dir / "model.safetensors").is_file()
-    written = load_file(str(output_dir / "model.safetensors"))
+    assert (output_dir / "model.safetensors.index.json").is_file()
+    assert (output_dir / "model-00001-of-00002.safetensors").is_file()
+    assert (output_dir / "model-00002-of-00002.safetensors").is_file()
+    reopened = open_local_safetensors_checkpoint(output_dir)
+    written = reopened.load_tensors(
+        (
+            "model.embed_tokens.weight",
+            "model.language_model.layers.0.router.per_expert_scale",
+            "model.language_model.layers.0.experts.down_proj",
+        )
+    )
     keep = torch.tensor([3, 1], dtype=torch.long)
 
     assert torch.equal(
@@ -413,6 +426,21 @@ def test_apply_prune_plan_materializes_from_sharded_checkpoint(tmp_path: Path) -
         written["model.embed_tokens.weight"],
         source["model.embed_tokens.weight"],
     )
+
+
+def test_apply_prune_plan_writes_stable_plan_identity_to_sidecars(tmp_path: Path) -> None:
+    _write_checkpoint(tmp_path)
+    output_dir = tmp_path / "derived-checkpoint"
+
+    result = apply_prune_plan(tmp_path, plan=_plan(), dry_run=False, output_dir=output_dir)
+
+    manifest_payload = json.loads((output_dir / "apply-manifest.json").read_text(encoding="utf-8"))
+    audit_payload = json.loads((output_dir / "apply-audit.json").read_text(encoding="utf-8"))
+
+    assert manifest_payload["metadata"]["plan_versioned_manifest_id"] == result.metadata["plan_versioned_manifest_id"]
+    assert manifest_payload["metadata"]["plan_canonical_digest"] == result.metadata["plan_canonical_digest"]
+    assert audit_payload["metadata"]["plan_versioned_manifest_id"] == result.metadata["plan_versioned_manifest_id"]
+    assert "output_checkpoint_dir" not in manifest_payload
 
 
 def test_apply_prune_plan_does_not_write_output_tree_when_post_validation_fails(

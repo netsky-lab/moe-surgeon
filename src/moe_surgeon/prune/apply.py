@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path
-import shutil
 from typing import Mapping, Sequence
 
 from moe_surgeon.models.backend import LoadedBackendBundle, resolve_backend
@@ -23,8 +22,6 @@ from moe_surgeon.schemas import (
     sort_topology,
     to_json,
 )
-
-from safetensors.torch import save_file
 import torch
 
 
@@ -82,8 +79,6 @@ class ApplyResult:
             "apply_id": self.apply_id,
             "plan_id": self.plan_id,
             "source_metadata_digest": self.source_metadata_digest,
-            "source_checkpoint_dir": self.source_checkpoint_dir,
-            "output_checkpoint_dir": self.output_checkpoint_dir,
             "source_checkpoint_fingerprint": self.source_checkpoint_fingerprint,
             "dry_run": self.dry_run,
             "created_at": self.created_at,
@@ -277,7 +272,7 @@ def apply_prune_plan(
                 )
         derived_state_dict = derived_state
         validation_state = derived_state
-        output_checkpoint_dir = None
+        output_checkpoint_dir = str(Path(output_dir).expanduser().resolve())
 
     validation_bundle = _bundle_with_state(checkpoint=checkpoint, backend=backend, state=validation_state)
     reports_by_layer = {report.layer_index: report for report in layer_reports}
@@ -295,22 +290,13 @@ def apply_prune_plan(
                 target_expert_count=report.target_expert_count,
             )
 
-    if not dry_run:
-        assert derived_state_dict is not None
-        assert output_dir is not None
-        output_checkpoint_dir = str(
-            _write_output_checkpoint_tree(
-                checkpoint=checkpoint,
-                derived_state_dict=derived_state_dict,
-                output_dir=output_dir,
-            )
-        )
-
     metadata = {
         "checkpoint_tensor_count": len(checkpoint.state_keys()),
         "layer_count": len(topology),
         "rewritten_tensor_count": len(rewritten_tensor_keys),
         "passthrough_tensor_count": len(passthrough_tensor_keys),
+        "plan_versioned_manifest_id": plan.versioned_manifest_id,
+        "plan_canonical_digest": sha256(plan.to_json(compact=True).encode("utf-8")).hexdigest(),
     }
     apply_seed = {
         "plan_id": plan.plan_id,
@@ -343,7 +329,7 @@ def apply_prune_plan(
     }
     apply_id = f"apply-{sha256(to_json(apply_seed).encode('utf-8')).hexdigest()[:16]}"
 
-    return ApplyResult(
+    result = ApplyResult(
         apply_id=apply_id,
         plan_id=plan.plan_id,
         source_metadata_digest=source_metadata_digest,
@@ -361,6 +347,12 @@ def apply_prune_plan(
         derived_state_dict=derived_state_dict,
         metadata=metadata,
     )
+    if not dry_run:
+        from moe_surgeon.export.runner import run_export
+
+        assert output_dir is not None
+        run_export(result, output_dir=output_dir)
+    return result
 
 
 def _validate_plan_identity(
@@ -413,57 +405,6 @@ def _validate_plan_identity(
 def _checkpoint_model_signature(checkpoint: LocalSafetensorsCheckpoint) -> str:
     revision = checkpoint.revision or "none"
     return f"{checkpoint.model_id}:{revision}"
-
-
-def _write_output_checkpoint_tree(
-    *,
-    checkpoint: LocalSafetensorsCheckpoint,
-    derived_state_dict: Mapping[str, torch.Tensor],
-    output_dir: str | Path,
-) -> Path:
-    output_root = Path(output_dir).expanduser().resolve()
-    source_root = checkpoint.checkpoint_dir
-    if output_root == source_root:
-        raise TopologyMismatchError(
-            "output_dir must differ from source checkpoint directory",
-            model_id=checkpoint.model_id,
-            details={"output_dir": str(output_root)},
-        )
-    if output_root.exists():
-        if not output_root.is_dir():
-            raise TopologyMismatchError(
-                "output_dir must be a directory path",
-                model_id=checkpoint.model_id,
-                details={"output_dir": str(output_root)},
-            )
-        if any(output_root.iterdir()):
-            raise TopologyMismatchError(
-                "output_dir must be empty",
-                model_id=checkpoint.model_id,
-                details={"output_dir": str(output_root)},
-            )
-    else:
-        output_root.mkdir(parents=True, exist_ok=False)
-
-    for entry in sorted(source_root.iterdir(), key=lambda path: path.name):
-        if _is_weight_artifact(entry.name):
-            continue
-        target = output_root / entry.name
-        if entry.is_dir():
-            shutil.copytree(entry, target)
-        else:
-            shutil.copy2(entry, target)
-
-    serializable_state = {
-        key: derived_state_dict[key].detach().cpu().contiguous()
-        for key in sorted(derived_state_dict)
-    }
-    save_file(serializable_state, str(output_root / "model.safetensors"))
-    return output_root
-
-
-def _is_weight_artifact(filename: str) -> bool:
-    return filename.endswith(".safetensors") or filename == "model.safetensors.index.json"
 
 
 def _resolve_apply_backend(checkpoint: LocalSafetensorsCheckpoint) -> Gemma4Backend:

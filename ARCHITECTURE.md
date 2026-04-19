@@ -37,7 +37,8 @@ moe_surgeon/
     - apply.py
   - export/
     - __init__.py
-    - safetensors_writer.py (future)
+    - safetensors_writer.py
+    - runner.py
     - manifest.py
 
 ## Core contracts
@@ -94,7 +95,7 @@ layouts before any output is materialized.
    in `finally`/context-manager exit paths.
 3. prune: merge signals and create PrunePlan.
 4. apply: remap tensors and validate invariants.
-5. export: write deterministic outputs and manifests.
+5. export: write deterministic outputs, compatibility metadata, and manifests.
 
 Analysis and runtime modules never mutate weights.
 

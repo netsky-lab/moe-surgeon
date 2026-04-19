@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Added the tracked export layer in `src/moe_surgeon/export/` with
+  deterministic safetensors writing, source-layout-preserving sharded exports,
+  canonical `run-manifest.json` generation, and literal `SHA256SUMS`
+  emission for all exported files except the checksum file itself.
+- Refactored `src/moe_surgeon/prune/apply.py` so non-dry-run apply now routes
+  checkpoint serialization through the export layer, rewrites `config.json`
+  only after validating remapped tensor topology, and persists canonical
+  `apply-manifest.json` / `apply-audit.json` sidecars carrying stable prune
+  plan identity metadata.
+- Added regression coverage in `tests/test_export_pipeline.py` and
+  `tests/test_prune_apply.py` for topology-consistent exports, repeated-run
+  manifest byte stability, literal `SHA256SUMS` verification, sharded export
+  reopening, and stable apply-sidecar plan provenance fields.
 - Audited the recently reconciled supervisor/task ledger entries so checkpoint
   reader delivery now stays attributed to `99534567` (`feat: restore local
   safetensors checkpoint reader`), targeted static-scan router-only reads stay
