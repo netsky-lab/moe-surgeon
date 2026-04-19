@@ -8,6 +8,7 @@ import subprocess
 import sys
 
 import pytest
+from click.testing import CliRunner
 
 from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
 from moe_surgeon.__main__ import main as module_main
@@ -100,6 +101,22 @@ def test_module_help_lists_placeholder_subcommands() -> None:
     assert "export" in result.stdout
 
 
+def test_root_help_lists_shared_options() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "moe_surgeon", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert "--model-id" in result.stdout
+    assert "--source-path" in result.stdout
+    assert "--backend" in result.stdout
+    assert "--seed" in result.stdout
+    assert "--artifact-root" in result.stdout
+
+
 def test_module_main_wrapper_runs_click_group_help() -> None:
     result = subprocess.run(
         [sys.executable, "-c", "from moe_surgeon.__main__ import main; main()", "--help"],
@@ -139,6 +156,28 @@ assert not forbidden, forbidden
 
 def test_module_main_is_importable() -> None:
     assert callable(module_main)
+
+
+def test_shared_root_context_is_available_to_subcommands() -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "--model-id",
+            "google/gemma-4-26b-a4b",
+            "--source-path",
+            "fixtures/checkpoint",
+            "scan",
+            "--output",
+            "artifacts/scan.json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "command=scan" in result.output
+    assert "model_id=google/gemma-4-26b-a4b" in result.output
+    assert "source_path=fixtures/checkpoint" in result.output
+    assert "output_path=artifacts/scan.json" in result.output
 
 
 @pytest.mark.parametrize(

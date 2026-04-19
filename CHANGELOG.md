@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Implemented the missing Click command graph in `src/moe_surgeon/cli/main.py`
+  with a typed shared `CliContext`, shared root options, and registered
+  `scan`, `bench`, `prune`, and `export` commands while keeping command
+  callbacks lightweight.
+- Updated `src/moe_surgeon/__main__.py` to exit through the new CLI entrypoint
+  cleanly for `python -m moe_surgeon`.
+- Expanded `tests/test_cli.py` with regressions covering shared root option
+  help and propagation of the shared context into subcommands.
 - Added the tracked export layer in `src/moe_surgeon/export/` with
   deterministic safetensors writing, source-layout-preserving sharded exports,
   canonical `run-manifest.json` generation, and literal `SHA256SUMS`
