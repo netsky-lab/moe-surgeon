@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from hashlib import sha256
+from pathlib import Path
 from typing import Mapping, Sequence, cast
 
 from moe_surgeon.models.errors import TopologyMismatchError
@@ -23,9 +24,11 @@ from moe_surgeon.schemas import (
     PrunePlan,
     PrunePlanItem,
     SchemaKey,
+    from_json_file,
     sort_experts,
     sort_plan_items,
     sort_topology,
+    to_json_file,
     to_json,
 )
 
@@ -557,8 +560,56 @@ def _default_model_signature(model_handle: ModelHandle) -> str:
     return f"{model_handle.model_id}:{revision}"
 
 
+def validate_planner_inputs(
+    topology: Sequence[LayerTopology],
+    *,
+    expert_stats: Sequence[ExpertStats] | None = None,
+    activation_stats: Sequence[ActivationStats] | None = None,
+) -> None:
+    """Validate planner input artifact coverage before scoring and budgeting."""
+
+    ordered_topology = _ordered_unique_topology(topology)
+    expected_experts = {
+        (layer.layer_index, expert_index)
+        for layer in ordered_topology
+        for expert_index in range(layer.expert_count)
+    }
+    if expert_stats is not None:
+        actual_experts = {(item.layer_index, item.expert_index) for item in expert_stats}
+        if actual_experts != expected_experts:
+            missing = sorted(expected_experts.difference(actual_experts))
+            layer_index, expert_index = missing[0]
+            raise TopologyMismatchError(
+                "expert_stats coverage does not match topology",
+                layer_index=layer_index,
+                details={"expert_index": expert_index},
+            )
+    if activation_stats is not None:
+        from moe_surgeon.analysis.scan import align_activation_stats
+
+        align_activation_stats(layers=ordered_topology, stats=activation_stats)
+
+
 __all__ = [
     "LayerConstraintOverride",
     "PlannerConstraints",
     "build_prune_plan",
+    "load_prune_plan",
+    "validate_planner_inputs",
+    "write_prune_plan",
 ]
+
+
+def write_prune_plan(path: str | Path, plan: PrunePlan) -> Path:
+    """Write a canonical prune plan to disk."""
+
+    return to_json_file(path, plan)
+
+
+def load_prune_plan(path: str | Path) -> PrunePlan:
+    """Load a canonical prune plan from disk."""
+
+    payload = from_json_file(path)
+    if not isinstance(payload, PrunePlan):
+        raise TypeError("prune plan payload must be PrunePlan")
+    return payload

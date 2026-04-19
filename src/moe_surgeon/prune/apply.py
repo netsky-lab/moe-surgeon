@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from hashlib import sha256
+import json
 from pathlib import Path
-import shutil
 from typing import Mapping, Sequence
 
 from moe_surgeon.models.backend import LoadedBackendBundle, resolve_backend
 from moe_surgeon.models.checkpoints import LocalSafetensorsCheckpoint, open_local_safetensors_checkpoint
-from moe_surgeon.models.errors import BackendMismatchError, TopologyMismatchError
+from moe_surgeon.models.errors import ArtifactValidationError, BackendMismatchError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.schemas import (
     CANONICAL_DEFAULT_TIMESTAMP,
@@ -23,8 +23,6 @@ from moe_surgeon.schemas import (
     sort_topology,
     to_json,
 )
-
-from safetensors.torch import save_file
 import torch
 
 
@@ -82,8 +80,6 @@ class ApplyResult:
             "apply_id": self.apply_id,
             "plan_id": self.plan_id,
             "source_metadata_digest": self.source_metadata_digest,
-            "source_checkpoint_dir": self.source_checkpoint_dir,
-            "output_checkpoint_dir": self.output_checkpoint_dir,
             "source_checkpoint_fingerprint": self.source_checkpoint_fingerprint,
             "dry_run": self.dry_run,
             "created_at": self.created_at,
@@ -194,6 +190,7 @@ def apply_prune_plan(
     plan: PrunePlan,
     dry_run: bool = False,
     output_dir: str | Path | None = None,
+    seed: int | None = None,
 ) -> ApplyResult:
     """Apply a deterministic prune plan to a local checkpoint in memory."""
 
@@ -238,6 +235,7 @@ def apply_prune_plan(
         revision=checkpoint.revision,
         backend_name=backend.name,
         source_path=str(checkpoint.checkpoint_dir),
+        seed=plan.model_handle.seed if seed is None and plan.model_handle is not None else (0 if seed is None else seed),
         metadata={
             "checkpoint_fingerprint": source_metadata_digest,
             "checkpoint_tensor_count": len(checkpoint.state_keys()),
@@ -277,7 +275,7 @@ def apply_prune_plan(
                 )
         derived_state_dict = derived_state
         validation_state = derived_state
-        output_checkpoint_dir = None
+        output_checkpoint_dir = str(Path(output_dir).expanduser().resolve())
 
     validation_bundle = _bundle_with_state(checkpoint=checkpoint, backend=backend, state=validation_state)
     reports_by_layer = {report.layer_index: report for report in layer_reports}
@@ -295,22 +293,13 @@ def apply_prune_plan(
                 target_expert_count=report.target_expert_count,
             )
 
-    if not dry_run:
-        assert derived_state_dict is not None
-        assert output_dir is not None
-        output_checkpoint_dir = str(
-            _write_output_checkpoint_tree(
-                checkpoint=checkpoint,
-                derived_state_dict=derived_state_dict,
-                output_dir=output_dir,
-            )
-        )
-
-    metadata = {
+    metadata: dict[str, SchemaKey] = {
         "checkpoint_tensor_count": len(checkpoint.state_keys()),
         "layer_count": len(topology),
         "rewritten_tensor_count": len(rewritten_tensor_keys),
         "passthrough_tensor_count": len(passthrough_tensor_keys),
+        "plan_versioned_manifest_id": plan.versioned_manifest_id,
+        "plan_canonical_digest": sha256(plan.to_json(compact=True).encode("utf-8")).hexdigest(),
     }
     apply_seed = {
         "plan_id": plan.plan_id,
@@ -340,10 +329,11 @@ def apply_prune_plan(
             [source_key, target_key] for source_key, target_key in passthrough_tensor_mapping.items()
         ],
         "metadata": metadata,
+        "seed": model_handle.seed,
     }
     apply_id = f"apply-{sha256(to_json(apply_seed).encode('utf-8')).hexdigest()[:16]}"
 
-    return ApplyResult(
+    result = ApplyResult(
         apply_id=apply_id,
         plan_id=plan.plan_id,
         source_metadata_digest=source_metadata_digest,
@@ -360,6 +350,166 @@ def apply_prune_plan(
         passthrough_tensor_mapping=passthrough_tensor_mapping,
         derived_state_dict=derived_state_dict,
         metadata=metadata,
+    )
+    if not dry_run:
+        from moe_surgeon.export.runner import run_export
+
+        assert output_dir is not None
+        run_export(result, output_dir=output_dir)
+    return result
+
+
+def load_apply_result(artifact_dir: str | Path) -> ApplyResult:
+    """Load an apply result from a materialized apply artifact directory."""
+
+    root = Path(artifact_dir).expanduser().resolve()
+    if not root.is_dir():
+        raise ArtifactValidationError(
+            "apply artifact directory does not exist",
+            details={"artifact_dir": str(root)},
+        )
+    manifest_path = root / "apply-manifest.json"
+    if not manifest_path.is_file():
+        raise ArtifactValidationError(
+            "apply artifact is missing apply-manifest.json",
+            details={"artifact_dir": str(root)},
+        )
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ArtifactValidationError(
+            "apply artifact manifest must contain valid JSON",
+            details={"artifact_dir": str(root), "manifest_path": str(manifest_path)},
+        ) from exc
+    if not isinstance(payload, dict):
+        raise ArtifactValidationError(
+            "apply manifest payload must be a JSON object",
+            details={"artifact_dir": str(root)},
+        )
+    checkpoint = open_local_safetensors_checkpoint(root)
+    derived_state_dict = checkpoint.load_tensors(checkpoint.state_keys())
+    try:
+        model_payload = payload.get("model_handle")
+        metadata = payload.get("metadata", {})
+        layer_reports_payload = payload.get("layer_reports", [])
+        rewritten_tensor_keys = payload.get("rewritten_tensor_keys", [])
+        passthrough_tensor_keys = payload.get("passthrough_tensor_keys", [])
+        rewritten_tensor_mapping = payload.get("rewritten_tensor_mapping", [])
+        passthrough_tensor_mapping = payload.get("passthrough_tensor_mapping", [])
+        if not isinstance(model_payload, dict):
+            raise ArtifactValidationError("apply manifest model_handle must be a JSON object")
+        if not isinstance(metadata, dict):
+            raise ArtifactValidationError("apply manifest metadata must be a JSON object")
+        if not isinstance(layer_reports_payload, list):
+            raise ArtifactValidationError("apply manifest layer_reports must be a JSON array")
+        if not isinstance(rewritten_tensor_keys, list):
+            raise ArtifactValidationError("apply manifest rewritten_tensor_keys must be a JSON array")
+        if not isinstance(passthrough_tensor_keys, list):
+            raise ArtifactValidationError("apply manifest passthrough_tensor_keys must be a JSON array")
+        if not isinstance(rewritten_tensor_mapping, list):
+            raise ArtifactValidationError("apply manifest rewritten_tensor_mapping must be a JSON array")
+        if not isinstance(passthrough_tensor_mapping, list):
+            raise ArtifactValidationError("apply manifest passthrough_tensor_mapping must be a JSON array")
+        model_handle = ModelHandle(
+            model_id=str(model_payload.get("model_id", checkpoint.model_id)),
+            revision=model_payload.get("revision") if isinstance(model_payload.get("revision"), str) else checkpoint.revision,
+            backend_name=model_payload.get("backend_name") if isinstance(model_payload.get("backend_name"), str) else None,
+            source_path=str(root),
+            dtype=model_payload.get("dtype") if isinstance(model_payload.get("dtype"), str) else None,
+            seed=int(model_payload.get("seed", 0)),
+            metadata=dict(model_payload.get("metadata", {})) if isinstance(model_payload.get("metadata"), dict) else {},
+        )
+        result = ApplyResult(
+            apply_id=str(payload["apply_id"]),
+            plan_id=str(payload["plan_id"]),
+            source_metadata_digest=str(payload["source_metadata_digest"]),
+            model_handle=model_handle,
+            source_checkpoint_dir=str(root),
+            output_checkpoint_dir=str(root),
+            source_checkpoint_fingerprint=str(payload["source_checkpoint_fingerprint"]),
+            dry_run=bool(payload["dry_run"]),
+            created_at=str(payload.get("created_at", CANONICAL_DEFAULT_TIMESTAMP)),
+            layer_reports=tuple(_load_apply_layer_report(item) for item in layer_reports_payload),
+            rewritten_tensor_keys=tuple(str(item) for item in rewritten_tensor_keys),
+            passthrough_tensor_keys=tuple(str(item) for item in passthrough_tensor_keys),
+            rewritten_tensor_mapping={
+                str(source_key): str(target_key)
+                for source_key, target_key in rewritten_tensor_mapping
+            },
+            passthrough_tensor_mapping={
+                str(source_key): str(target_key)
+                for source_key, target_key in passthrough_tensor_mapping
+            },
+            derived_state_dict=derived_state_dict,
+            metadata=dict(metadata),
+        )
+    except ArtifactValidationError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ArtifactValidationError(
+            "apply manifest payload is malformed",
+            model_id=checkpoint.model_id,
+            details={"artifact_dir": str(root)},
+        ) from exc
+    return validate_apply_result(result)
+
+
+def validate_apply_result(
+    result: ApplyResult,
+    *,
+    require_materialized: bool = False,
+) -> ApplyResult:
+    """Validate an apply artifact before export or CLI chaining."""
+
+    if not result.layer_reports:
+        raise TopologyMismatchError(
+            "apply result must include layer_reports",
+            model_id=result.model_handle.model_id,
+            details={"apply_id": result.apply_id},
+        )
+    if require_materialized:
+        if result.dry_run:
+            raise TopologyMismatchError(
+                "apply artifact must be materialized for export",
+                model_id=result.model_handle.model_id,
+                details={"apply_id": result.apply_id},
+            )
+        if result.output_checkpoint_dir is None or result.derived_state_dict is None:
+            raise TopologyMismatchError(
+                "apply artifact is missing derived checkpoint state",
+                model_id=result.model_handle.model_id,
+                details={"apply_id": result.apply_id},
+            )
+    return result
+
+
+def _load_apply_layer_report(payload: object) -> ApplyLayerReport:
+    if not isinstance(payload, dict):
+        raise TypeError("apply layer report payload must be a mapping")
+    return ApplyLayerReport(
+        layer_index=int(payload["layer_index"]),
+        layer_name=str(payload["layer_name"]),
+        source_expert_count=int(payload["source_expert_count"]),
+        target_expert_count=int(payload["target_expert_count"]),
+        keep_indices=tuple(int(item) for item in payload.get("keep_indices", [])),
+        drop_indices=tuple(int(item) for item in payload.get("drop_indices", [])),
+        old_to_new_index=tuple(
+            (int(item[0]), int(item[1])) for item in payload.get("old_to_new_index", [])
+        ),
+        tensor_keys_to_rewrite=tuple(str(item) for item in payload.get("tensor_keys_to_rewrite", [])),
+        tensor_deltas=tuple(_load_apply_tensor_delta(item) for item in payload.get("tensor_deltas", [])),
+    )
+
+
+def _load_apply_tensor_delta(payload: object) -> ApplyTensorDelta:
+    if not isinstance(payload, dict):
+        raise TypeError("apply tensor delta payload must be a mapping")
+    return ApplyTensorDelta(
+        tensor_key=str(payload["tensor_key"]),
+        tensor_role=str(payload["tensor_role"]),
+        source_shape=tuple(int(item) for item in payload.get("source_shape", [])),
+        target_shape=tuple(int(item) for item in payload.get("target_shape", [])),
+        rewritten=bool(payload["rewritten"]),
     )
 
 
@@ -413,57 +563,6 @@ def _validate_plan_identity(
 def _checkpoint_model_signature(checkpoint: LocalSafetensorsCheckpoint) -> str:
     revision = checkpoint.revision or "none"
     return f"{checkpoint.model_id}:{revision}"
-
-
-def _write_output_checkpoint_tree(
-    *,
-    checkpoint: LocalSafetensorsCheckpoint,
-    derived_state_dict: Mapping[str, torch.Tensor],
-    output_dir: str | Path,
-) -> Path:
-    output_root = Path(output_dir).expanduser().resolve()
-    source_root = checkpoint.checkpoint_dir
-    if output_root == source_root:
-        raise TopologyMismatchError(
-            "output_dir must differ from source checkpoint directory",
-            model_id=checkpoint.model_id,
-            details={"output_dir": str(output_root)},
-        )
-    if output_root.exists():
-        if not output_root.is_dir():
-            raise TopologyMismatchError(
-                "output_dir must be a directory path",
-                model_id=checkpoint.model_id,
-                details={"output_dir": str(output_root)},
-            )
-        if any(output_root.iterdir()):
-            raise TopologyMismatchError(
-                "output_dir must be empty",
-                model_id=checkpoint.model_id,
-                details={"output_dir": str(output_root)},
-            )
-    else:
-        output_root.mkdir(parents=True, exist_ok=False)
-
-    for entry in sorted(source_root.iterdir(), key=lambda path: path.name):
-        if _is_weight_artifact(entry.name):
-            continue
-        target = output_root / entry.name
-        if entry.is_dir():
-            shutil.copytree(entry, target)
-        else:
-            shutil.copy2(entry, target)
-
-    serializable_state = {
-        key: derived_state_dict[key].detach().cpu().contiguous()
-        for key in sorted(derived_state_dict)
-    }
-    save_file(serializable_state, str(output_root / "model.safetensors"))
-    return output_root
-
-
-def _is_weight_artifact(filename: str) -> bool:
-    return filename.endswith(".safetensors") or filename == "model.safetensors.index.json"
 
 
 def _resolve_apply_backend(checkpoint: LocalSafetensorsCheckpoint) -> Gemma4Backend:
@@ -831,4 +930,5 @@ __all__ = [
     "ApplyResult",
     "ApplyTensorDelta",
     "apply_prune_plan",
+    "validate_apply_result",
 ]

@@ -175,6 +175,7 @@ class Gemma4TopologyConfig:
     hidden_size: int
     num_experts: int
     top_k: int
+    intermediate_size: int | None
     moe_intermediate_size: int | None
     moe_layer_indices: tuple[int, ...]
     raw_config: Mapping[str, object]
@@ -625,6 +626,7 @@ class Gemma4Backend:
                 layer_index=layer.layer_index,
                 details={"router_top_k": active_router_state.top_k, "layer_top_k": layer.top_k},
             )
+        self._validate_dense_companion_tensors(bundle, layer=layer)
         self.extract_expert_state(bundle, layer=layer)
 
     def resolve_router_module(
@@ -715,6 +717,11 @@ class Gemma4Backend:
                 details={"top_k": top_k, "num_experts": num_experts},
             )
 
+        intermediate_size = self._optional_int(
+            text_config,
+            "intermediate_size",
+            model_id=model_id,
+        )
         moe_intermediate_size = self._optional_int(
             text_config,
             "moe_intermediate_size",
@@ -732,6 +739,7 @@ class Gemma4Backend:
             hidden_size=hidden_size,
             num_experts=num_experts,
             top_k=top_k,
+            intermediate_size=intermediate_size,
             moe_intermediate_size=moe_intermediate_size,
             moe_layer_indices=moe_layer_indices,
             raw_config=top_level,
@@ -1246,6 +1254,104 @@ class Gemma4Backend:
         if raw_dtype is None:
             return None
         return str(raw_dtype)
+
+    def _validate_dense_companion_tensors(
+        self,
+        bundle: LoadedBackendBundle,
+        *,
+        layer: LayerTopology,
+    ) -> None:
+        topology = self._parse_bundle_topology(bundle)
+        tensor_keys = self.resolve_layer_tensor_keys(bundle, layer_index=layer.layer_index)
+        state_index = self._state_index(bundle)
+
+        down_proj_key = tensor_keys["mlp_down_proj"]
+        gate_proj_key = tensor_keys["mlp_gate_proj"]
+        up_proj_key = tensor_keys["mlp_up_proj"]
+        down_proj_shape = self._tensor_shape(state_index[down_proj_key])
+        gate_proj_shape = self._tensor_shape(state_index[gate_proj_key])
+        up_proj_shape = self._tensor_shape(state_index[up_proj_key])
+
+        if len(down_proj_shape) != 2:
+            raise ShapeInvariantViolationError(
+                "Gemma4 mlp.down_proj.weight rank must be 2",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                tensor_key=down_proj_key,
+                expected_shape=(layer.hidden_size, 0),
+                actual_shape=down_proj_shape,
+                details={"expected_layout": "(hidden_size, intermediate_size)"},
+            )
+        intermediate_size = topology.intermediate_size or down_proj_shape[1]
+        self._validate_dense_tensor(
+            down_proj_shape,
+            bundle=bundle,
+            layer=layer,
+            tensor_key=down_proj_key,
+            tensor_name="mlp.down_proj.weight",
+            expected_shape=(layer.hidden_size, intermediate_size),
+            expected_layout="(hidden_size, intermediate_size)",
+        )
+
+        expected_ffn_proj_shape = (intermediate_size, layer.hidden_size)
+        self._validate_dense_tensor(
+            gate_proj_shape,
+            bundle=bundle,
+            layer=layer,
+            tensor_key=gate_proj_key,
+            tensor_name="mlp.gate_proj.weight",
+            expected_shape=expected_ffn_proj_shape,
+            expected_layout="(intermediate_size, hidden_size)",
+        )
+        self._validate_dense_tensor(
+            up_proj_shape,
+            bundle=bundle,
+            layer=layer,
+            tensor_key=up_proj_key,
+            tensor_name="mlp.up_proj.weight",
+            expected_shape=expected_ffn_proj_shape,
+            expected_layout="(intermediate_size, hidden_size)",
+        )
+
+        for tensor_role in (
+            "pre_feedforward_layernorm",
+            "pre_feedforward_layernorm_2",
+            "post_feedforward_layernorm",
+            "post_feedforward_layernorm_1",
+            "post_feedforward_layernorm_2",
+        ):
+            tensor_key = tensor_keys[tensor_role]
+            self._validate_dense_tensor(
+                self._tensor_shape(state_index[tensor_key]),
+                bundle=bundle,
+                layer=layer,
+                tensor_key=tensor_key,
+                tensor_name=tensor_key.removeprefix(f"{self._layer_prefix(bundle, layer_index=layer.layer_index)}."),
+                expected_shape=(layer.hidden_size,),
+                expected_layout="(hidden_size,)",
+            )
+
+    def _validate_dense_tensor(
+        self,
+        shape: tuple[int, ...],
+        *,
+        bundle: LoadedBackendBundle,
+        layer: LayerTopology,
+        tensor_key: str,
+        tensor_name: str,
+        expected_shape: tuple[int, ...],
+        expected_layout: str,
+    ) -> None:
+        if shape != expected_shape:
+            raise ShapeInvariantViolationError(
+                f"Gemma4 {tensor_name} shape mismatch",
+                model_id=bundle.model_handle.model_id,
+                layer_index=layer.layer_index,
+                tensor_key=tensor_key,
+                expected_shape=expected_shape,
+                actual_shape=shape,
+                details={"expected_layout": expected_layout},
+            )
 
     def _validate_router_projection(
         self,

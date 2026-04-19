@@ -26,18 +26,21 @@ moe_surgeon/
   - analysis/
     - __init__.py
     - scan.py
-    - metrics.py (future)
+    - metrics.py
   - runtime/
     - __init__.py
+    - bench.py
     - profiler.py
   - prune/
     - __init__.py
+    - strategy.py
     - strategies.py
     - planner.py
     - apply.py
   - export/
     - __init__.py
-    - safetensors_writer.py (future)
+    - safetensors_writer.py
+    - runner.py
     - manifest.py
 
 ## Core contracts
@@ -88,13 +91,20 @@ layouts before any output is materialized.
 ## Data flow
 
 1. scan: discover topology and static routing scores.
+   The CLI persists the scan payload plus a sidecar run manifest and treats the
+   scan artifact as the canonical topology snapshot for downstream steps.
 2. bench: capture live routing into ActivationStats.
    Runtime profiling is backend-driven and offline-safe: hooks attach only to
    backend-resolved router modules, aggregation is mask-aware, and cleanup runs
    in `finally`/context-manager exit paths.
-3. prune: merge signals and create PrunePlan.
+   Bench preflight validates the runtime-loaded topology against the persisted
+   scan artifact before any prompt execution.
+3. prune: merge persisted scan + bench signals and create PrunePlan.
+   The CLI writes `prune-plan.json` at the prune root and materializes the
+   derived checkpoint under `applied-checkpoint/` so export can reuse apply
+   results directly.
 4. apply: remap tensors and validate invariants.
-5. export: write deterministic outputs and manifests.
+5. export: write deterministic outputs, compatibility metadata, and manifests.
 
 Analysis and runtime modules never mutate weights.
 

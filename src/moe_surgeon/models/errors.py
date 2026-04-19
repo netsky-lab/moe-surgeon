@@ -108,6 +108,8 @@ def build_diagnostic_context(
 class ModelError(ValueError):
     """Base class for model/backend domain errors."""
 
+    error_code = "model_error"
+
     def __init__(self, message: str, *, context: DiagnosticContext | None = None) -> None:
         self.context = context
         super().__init__(format_diagnostic_message(message, context=context))
@@ -116,9 +118,44 @@ class ModelError(ValueError):
 class SchemaValidationError(ModelError):
     """Base error for schema and contract violations."""
 
+    error_code = "schema_validation"
+
+
+class ArtifactValidationError(SchemaValidationError):
+    """Raised when persisted workflow artifacts fail CLI preflight validation."""
+
+    error_code = "artifact_validation"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model_id: str | None = None,
+        backend_name: str | None = None,
+        layer_index: int | None = None,
+        tensor_key: str | None = None,
+        expected_shape: tuple[int, ...] | None = None,
+        actual_shape: tuple[int, ...] | None = None,
+        details: Mapping[str, object] | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            context=build_diagnostic_context(
+                model_id=model_id,
+                backend_name=backend_name,
+                layer_index=layer_index,
+                tensor_key=tensor_key,
+                expected_shape=expected_shape,
+                actual_shape=actual_shape,
+                details={} if details is None else dict(details),
+            ),
+        )
+
 
 class UnsupportedModelError(ModelError):
     """Raised when no registered backend supports a requested model signature."""
+
+    error_code = "unsupported_model_family"
 
     def __init__(
         self,
@@ -142,6 +179,8 @@ class UnsupportedModelError(ModelError):
 class BackendMismatchError(ModelError):
     """Raised when backend registration or selection invariants are violated."""
 
+    error_code = "backend_mismatch"
+
     def __init__(
         self,
         message: str,
@@ -162,6 +201,8 @@ class BackendMismatchError(ModelError):
 
 class TopologyMismatchError(SchemaValidationError):
     """Raised when topology-level invariants cannot be satisfied."""
+
+    error_code = "topology_mismatch"
 
     def __init__(
         self,
@@ -190,6 +231,8 @@ class TopologyMismatchError(SchemaValidationError):
 class ShapeInvariantViolationError(SchemaValidationError):
     """Raised when tensor-like metadata is malformed."""
 
+    error_code = "shape_invariant_violation"
+
     def __init__(
         self,
         message: str,
@@ -215,6 +258,7 @@ class ShapeInvariantViolationError(SchemaValidationError):
 
 
 __all__ = [
+    "ArtifactValidationError",
     "BackendMismatchError",
     "DiagnosticContext",
     "ModelError",

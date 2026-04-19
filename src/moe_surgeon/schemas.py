@@ -8,7 +8,7 @@ The module is intentionally free from runtime heavy dependencies such as
 
 from __future__ import annotations
 
-from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from math import floor, isfinite
@@ -154,6 +154,25 @@ def validate_shape_tuple(
     """
 
     return _ensure_shape_tuple(value, name=name, allow_empty=allow_empty, require_last=require_last)
+
+
+def resolve_deterministic_seed(
+    *values: int | None,
+    name: str = "seed",
+) -> int:
+    """Resolve a deterministic workflow seed from optional seed candidates."""
+
+    normalized: list[int] = []
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        normalized.append(_ensure_non_negative_int(value, name=f"{name}[{index}]"))
+    non_zero = sorted({value for value in normalized if value != 0})
+    if len(non_zero) > 1:
+        raise SchemaValidationError(f"{name} values must agree for deterministic workflow")
+    if non_zero:
+        return non_zero[0]
+    return 0 if not normalized else normalized[0]
 
 
 def _canonicalize_metadata(value: Mapping[str, Any] | None) -> Dict[str, SchemaKey]:
@@ -900,6 +919,11 @@ class RunArtifactManifest(_SchemaBase):
         payload = self.to_dict()
         payload["started_at"] = CANONICAL_DEFAULT_TIMESTAMP
         payload["finished_at"] = None
+        if isinstance(payload.get("model_handle"), dict):
+            payload["model_handle"] = _canonicalize_manifest_model_handle_payload(payload["model_handle"])
+        output_paths = payload.get("output_paths")
+        if isinstance(output_paths, dict):
+            payload["output_paths"] = _canonicalize_manifest_output_paths(output_paths)
         metadata = dict(self.metadata)
         metadata.pop("canonical_manifest_digest", None)
         metadata.pop("canonical_artifact_digest", None)
@@ -916,6 +940,31 @@ class RunArtifactManifest(_SchemaBase):
         """Return a timestamp-free digest for reproducible manifests."""
 
         return sha256(to_json(self.canonical_digest_payload()).encode("utf-8")).hexdigest()
+
+    def finalized(self) -> "RunArtifactManifest":
+        """Return a copy carrying its canonical manifest digest in metadata."""
+
+        return replace(
+            self,
+            metadata={
+                **dict(self.metadata),
+                "canonical_manifest_digest": self.canonical_digest,
+            },
+        )
+
+
+def _canonicalize_manifest_model_handle_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload)
+    normalized["source_path"] = None
+    return normalized
+
+
+def _canonicalize_manifest_output_paths(output_paths: Mapping[str, Any]) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    for key, value in output_paths.items():
+        text = str(value)
+        normalized[str(key)] = Path(text).name if Path(text).is_absolute() else text
+    return normalized
 
 
 SchemaType = Union[
@@ -1133,6 +1182,7 @@ __all__ = [
     "SchemaType",
     "validate_shape_tuple",
     "validate_layer_ref",
+    "resolve_deterministic_seed",
     "ModelHandle",
     "LayerTopology",
     "RouterState",
