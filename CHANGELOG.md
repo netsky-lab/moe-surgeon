@@ -38,6 +38,10 @@
   `tests/test_prune_apply.py` for topology-consistent exports, repeated-run
   manifest byte stability, literal `SHA256SUMS` verification, sharded export
   reopening, and stable apply-sidecar plan provenance fields.
+- Hardened `README.md`, `AGENTS.md`, `ROADMAP.md`, and `ARCHITECTURE.md` with
+  explicit reproducibility rules, immutable artifact/checkpoint handling,
+  preflight and post-remap shape-validation requirements, safe-fallback domain
+  error policy, and current offline-versus-integration execution limits.
 - Audited the recently reconciled supervisor/task ledger entries so checkpoint
   reader delivery now stays attributed to `99534567` (`feat: restore local
   safetensors checkpoint reader`), targeted static-scan router-only reads stay

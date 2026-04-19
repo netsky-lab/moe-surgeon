@@ -85,6 +85,11 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Validate expert index mapping before and after prune operations.
 - Deterministic sorting and stable serialization for all manifests.
 - Strict shape diagnostics before write-back.
+- Repeated runs with the same inputs, fixed seed, and artifact chain must emit
+  the same plan ordering, manifest JSON, and export checksums.
+- Unsupported topology, malformed manifests, or tensor-shape mismatches are
+  hard failures; the tool does not silently skip validation or attempt partial
+  checkpoint repair.
 
 ## Deterministic test baseline
 
@@ -95,6 +100,17 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - The default suite remains offline; live Hugging Face-backed runtime coverage
   stays behind the explicit `integration` marker.
 
+## Reproducible workflow rules
+
+- Treat the scan artifact as the canonical topology snapshot for downstream
+  bench, prune, and export stages.
+- Preserve the same `seed` across chained artifacts unless a command fails fast
+  with an explicit conflicting-seed or artifact-validation error.
+- Run apply/export against a derived output tree only; source safetensors and
+  source config files are inputs, never scratch space.
+- Investigate any shape or topology mismatch before retrying; safe fallback in
+  this project means refusing the run, not degrading validation.
+
 ## Known limitations
 
 - The offline fixture backend validates contracts and chaining behavior, but it
@@ -104,6 +120,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - Runtime profiling coverage is intentionally split: offline tests assert
   deterministic aggregation and CLI plumbing, while live execution still
   depends on an explicitly selected compatible Transformers environment.
+- Current support is intentionally narrow: the shipped backend and validation
+  rules target Gemma 4 26B-A4B first, and unsupported MoE families should be
+  expected to raise explicit domain errors.
 
 ## CLI bootstrap
 

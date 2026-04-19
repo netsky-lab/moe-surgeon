@@ -105,6 +105,15 @@ Acceptance criteria: validation-error branches are tested for each domain error;
   must remain intact when new backends or strategies are added.
 - No checkpoint mutation is permitted during apply/export execution notes,
   including temporary write-back shortcuts in tooling or tests.
+- Execution order is part of the contract: `scan` establishes the topology
+  snapshot, `bench` validates against it, `prune` records the canonical plan,
+  and apply/export only consume derived artifacts from those prior stages.
+- Safe fallback means explicit refusal on malformed manifests, backend
+  mismatches, unsupported topologies, or tensor shape violations; roadmap
+  completion does not include best-effort partial outputs.
 - Known limitation: offline tests cover contract and manifest correctness, but
   they do not certify real-model throughput or routing quality; those remain in
   explicit integration coverage.
+- Known limitation: current implementation and docs are intentionally optimized
+  around Gemma 4 26B-A4B semantics, so additional MoE families require backend
+  and validation extensions rather than inferred compatibility.
