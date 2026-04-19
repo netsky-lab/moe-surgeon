@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 from typing import TYPE_CHECKING, Mapping, Sequence
 
+from huggingface_hub import split_torch_state_dict_into_shards
 from safetensors.torch import save_file
 import torch
 
@@ -381,28 +382,111 @@ def _write_weights(
     derived_state: Mapping[str, torch.Tensor],
     output_root: Path,
 ) -> tuple[tuple[str, ...], Mapping[str, str], bool]:
+    sorted_state = dict(sorted(derived_state.items()))
     shard_names = tuple(sorted(set(source_checkpoint.weight_map.values())))
-    if len(shard_names) <= 1 and shard_names == (_SINGLE_WEIGHTS_FILENAME,):
-        save_file(dict(sorted(derived_state.items())), str(output_root / _SINGLE_WEIGHTS_FILENAME))
-        weight_map = {key: _SINGLE_WEIGHTS_FILENAME for key in sorted(derived_state)}
-        return ((_SINGLE_WEIGHTS_FILENAME,), weight_map, False)
+    source_is_single_file = shard_names == (_SINGLE_WEIGHTS_FILENAME,)
+    split = split_torch_state_dict_into_shards(
+        sorted_state,
+        filename_pattern="model{suffix}.safetensors",
+        max_shard_size=_target_max_shard_size(
+            source_checkpoint=source_checkpoint,
+            derived_state=sorted_state,
+            source_is_single_file=source_is_single_file,
+        ),
+    )
+    for filename, tensor_keys in split.filename_to_tensors.items():
+        shard = {tensor_key: sorted_state[tensor_key] for tensor_key in tensor_keys}
+        save_file(shard, str(output_root / filename), metadata={"format": "pt"})
+    if not split.is_sharded:
+        return ((_SINGLE_WEIGHTS_FILENAME,), dict(sorted(split.tensor_to_filename.items())), False)
 
-    shard_to_tensors: dict[str, dict[str, torch.Tensor]] = {name: {} for name in shard_names}
-    for tensor_key, tensor_value in sorted(derived_state.items()):
-        shard_name = source_checkpoint.weight_map[tensor_key]
-        shard_to_tensors.setdefault(shard_name, {})[tensor_key] = tensor_value
-    for shard_name in shard_names:
-        save_file(dict(sorted(shard_to_tensors[shard_name].items())), str(output_root / shard_name))
     index_payload = {
-        "metadata": {"total_size": _total_tensor_bytes(derived_state)},
-        "weight_map": {tensor_key: source_checkpoint.weight_map[tensor_key] for tensor_key in sorted(derived_state)},
+        "metadata": dict(sorted(split.metadata.items())),
+        "weight_map": dict(sorted(split.tensor_to_filename.items())),
     }
     (output_root / _INDEX_FILENAME).write_text(to_json(index_payload), encoding="utf-8")
     return (
-        shard_names,
-        {tensor_key: source_checkpoint.weight_map[tensor_key] for tensor_key in sorted(derived_state)},
+        tuple(split.filename_to_tensors),
+        dict(sorted(split.tensor_to_filename.items())),
         True,
     )
+
+
+def _target_max_shard_size(
+    *,
+    source_checkpoint: LocalSafetensorsCheckpoint,
+    derived_state: Mapping[str, torch.Tensor],
+    source_is_single_file: bool,
+) -> int:
+    total_size = _total_tensor_bytes(derived_state)
+    if source_is_single_file:
+        return total_size
+
+    source_shard_sizes = _source_shard_sizes(source_checkpoint=source_checkpoint)
+    max_source_shard_size = max(source_shard_sizes.values())
+    if total_size > max_source_shard_size:
+        return max_source_shard_size
+
+    largest_tensor = max(
+        int(tensor.nelement()) * int(tensor.element_size()) for tensor in derived_state.values()
+    )
+    if total_size > largest_tensor:
+        return total_size - 1
+    return largest_tensor
+
+
+def _source_shard_sizes(*, source_checkpoint: LocalSafetensorsCheckpoint) -> Mapping[str, int]:
+    sizes: dict[str, int] = {}
+    for metadata in source_checkpoint.tensor_metadata():
+        sizes.setdefault(metadata.shard_filename, 0)
+        sizes[metadata.shard_filename] += _tensor_nbytes_from_shape(
+            shape=metadata.shape,
+            dtype=metadata.dtype,
+        )
+    return sizes
+
+
+def _tensor_nbytes_from_shape(*, shape: tuple[int, ...], dtype: str) -> int:
+    return _dtype_nbytes(dtype=dtype) * _numel(shape=shape)
+
+
+def _numel(*, shape: tuple[int, ...]) -> int:
+    total = 1
+    for dimension in shape:
+        total *= dimension
+    return total
+
+
+def _dtype_nbytes(*, dtype: str) -> int:
+    probe = torch.empty((), dtype=_parse_torch_dtype(dtype))
+    return int(probe.element_size())
+
+
+def _parse_torch_dtype(dtype: str) -> torch.dtype:
+    normalized = dtype
+    safetensors_aliases: dict[str, torch.dtype] = {
+        "BOOL": torch.bool,
+        "BF16": torch.bfloat16,
+        "F16": torch.float16,
+        "F32": torch.float32,
+        "F64": torch.float64,
+        "I8": torch.int8,
+        "I16": torch.int16,
+        "I32": torch.int32,
+        "I64": torch.int64,
+        "U8": torch.uint8,
+    }
+    if normalized in safetensors_aliases:
+        return safetensors_aliases[normalized]
+    if normalized.startswith("torch."):
+        normalized = normalized.split(".", 1)[1]
+    candidate = getattr(torch, normalized, None)
+    if not isinstance(candidate, torch.dtype):
+        raise TopologyMismatchError(
+            "export could not resolve source tensor dtype for deterministic sharding",
+            details={"dtype": dtype},
+        )
+    return candidate
 
 
 def _total_tensor_bytes(state: Mapping[str, torch.Tensor]) -> int:

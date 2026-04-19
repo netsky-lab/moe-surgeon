@@ -9,6 +9,7 @@ description = "Python CLI for analyzing and pruning MoE models"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+  "huggingface_hub>=0.36; python_version >= '3.10'",
   "torch>=2.1; python_version >= '3.10'",
   "transformers>=5.5.0; python_version >= '3.10'",
   "safetensors>=0.4; python_version >= '3.10'",

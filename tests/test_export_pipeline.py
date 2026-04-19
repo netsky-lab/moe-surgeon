@@ -85,6 +85,12 @@ def test_run_export_sha256sums_matches_literal_file_digests(tmp_path: Path) -> N
         digest, filename = line.split("  ", 1)
         recorded[filename] = digest
 
+    actual_files = {
+        path.relative_to(export_dir).as_posix()
+        for path in export_dir.rglob("*")
+        if path.is_file() and path.name != "SHA256SUMS"
+    }
+    assert set(recorded) == actual_files
     assert "run-manifest.json" in recorded
     assert recorded["run-manifest.json"] == _sha256_file(export_dir / "run-manifest.json")
     for relative_name, digest in recorded.items():
@@ -130,6 +136,46 @@ def test_run_export_rewrites_config_to_match_exported_tensor_topology(tmp_path: 
     assert len(topology) == 1
     assert topology[0].expert_count == 2
     assert topology[0].top_k == 2
+
+
+def test_run_export_preserves_sharded_transformers_compatible_topology(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_sharded_checkpoint(source_root)
+    applied = apply_prune_plan(source_root, plan=_plan(), dry_run=False, output_dir=tmp_path / "applied")
+
+    export_dir = tmp_path / "export"
+    run_export(applied, output_dir=export_dir)
+
+    reopened = open_local_safetensors_checkpoint(export_dir)
+    config = json.loads((export_dir / "config.json").read_text(encoding="utf-8"))
+
+    assert (export_dir / "model.safetensors.index.json").is_file()
+    assert len(set(reopened.weight_map.values())) == 2
+    assert config["text_config"]["num_experts"] == 2
+
+    backend = resolve_backend(reopened.to_backend_signature())
+    assert isinstance(backend, Gemma4Backend)
+    topology = backend.extract_topology(
+        LoadedBackendBundle(
+            backend_name=backend.name,
+            model_handle=ModelHandle(
+                model_id=reopened.model_id,
+                revision=reopened.revision,
+                backend_name=backend.name,
+                source_path=str(reopened.checkpoint_dir),
+            ),
+            model=object(),
+            config=reopened.config,
+            metadata={
+                "state_dict": {item.tensor_key: item for item in reopened.tensor_metadata()},
+                "backend_version": backend.backend_version,
+            },
+        )
+    )
+
+    assert len(topology) == 1
+    assert topology[0].expert_count == 2
 
 
 def test_run_export_rejects_non_apply_result_contract(tmp_path: Path) -> None:
