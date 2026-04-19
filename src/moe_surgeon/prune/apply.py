@@ -290,7 +290,7 @@ def apply_prune_plan(
                 target_expert_count=report.target_expert_count,
             )
 
-    metadata = {
+    metadata: dict[str, SchemaKey] = {
         "checkpoint_tensor_count": len(checkpoint.state_keys()),
         "layer_count": len(topology),
         "rewritten_tensor_count": len(rewritten_tensor_keys),

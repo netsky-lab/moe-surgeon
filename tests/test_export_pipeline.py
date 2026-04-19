@@ -8,9 +8,12 @@ from pathlib import Path
 import pytest
 
 from moe_surgeon.export import run_export
+from moe_surgeon.models.backend import LoadedBackendBundle, resolve_backend
 from moe_surgeon.models.checkpoints import open_local_safetensors_checkpoint
 from moe_surgeon.models.errors import TopologyMismatchError
+from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
+from moe_surgeon.schemas import ModelHandle
 
 from test_prune_apply import _plan, _write_checkpoint, _write_sharded_checkpoint
 
@@ -103,3 +106,32 @@ def test_run_export_rewrites_config_to_match_exported_tensor_topology(tmp_path: 
 
     assert config["text_config"]["num_experts"] == 2
     assert tuple(router["model.language_model.layers.0.router.proj.weight"].shape) == (2, 3)
+
+    backend = resolve_backend(reopened.to_backend_signature())
+    assert isinstance(backend, Gemma4Backend)
+    topology = backend.extract_topology(
+        LoadedBackendBundle(
+            backend_name=backend.name,
+            model_handle=ModelHandle(
+                model_id=reopened.model_id,
+                revision=reopened.revision,
+                backend_name=backend.name,
+                source_path=str(reopened.checkpoint_dir),
+            ),
+            model=object(),
+            config=reopened.config,
+            metadata={
+                "state_dict": {item.tensor_key: item for item in reopened.tensor_metadata()},
+                "backend_version": backend.backend_version,
+            },
+        )
+    )
+
+    assert len(topology) == 1
+    assert topology[0].expert_count == 2
+    assert topology[0].top_k == 2
+
+
+def test_run_export_rejects_non_apply_result_contract(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="ApplyResult"):
+        run_export({"derived_state_dict": {}}, output_dir=tmp_path / "export")

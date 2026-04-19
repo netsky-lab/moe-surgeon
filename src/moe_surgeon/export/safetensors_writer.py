@@ -83,13 +83,14 @@ def write_safetensors_artifact(
             model_id=apply_result.model_handle.model_id,
             details={"apply_id": apply_result.apply_id},
         )
+    derived_state_dict = apply_result.derived_state_dict
 
     source_checkpoint = open_local_safetensors_checkpoint(apply_result.source_checkpoint_dir)
     backend = _resolve_export_backend(source_checkpoint)
     validation_bundle = _build_validation_bundle(
         checkpoint=source_checkpoint,
         backend=backend,
-        state=apply_result.derived_state_dict,
+        state=derived_state_dict,
     )
     topology = backend.extract_topology(
         _build_validation_bundle(
@@ -112,8 +113,8 @@ def write_safetensors_artifact(
         model_id=apply_result.model_handle.model_id,
     )
     derived_state = {
-        key: apply_result.derived_state_dict[key].detach().cpu().contiguous()
-        for key in sorted(apply_result.derived_state_dict)
+        key: derived_state_dict[key].detach().cpu().contiguous()
+        for key in sorted(derived_state_dict)
     }
     copied_artifacts = _copy_non_weight_artifacts(source_checkpoint=source_checkpoint, output_root=output_root)
     written_config = _write_config(
@@ -199,7 +200,9 @@ def _validate_export_state(
     validation_bundle: LoadedBackendBundle,
 ) -> None:
     source_keys = checkpoint.state_keys()
-    derived_keys = tuple(sorted(apply_result.derived_state_dict or {}))
+    derived_state_dict = apply_result.derived_state_dict
+    assert derived_state_dict is not None
+    derived_keys = tuple(sorted(derived_state_dict))
     if derived_keys != source_keys:
         raise TopologyMismatchError(
             "export derived tensors must preserve the checkpoint key set",
@@ -231,7 +234,7 @@ def _validate_export_state(
                 layer=_target_layer(layer, report=report),
                 tensor_role=tensor_role,
                 tensor_key=tensor_key,
-                tensor_value=apply_result.derived_state_dict[tensor_key],
+                tensor_value=derived_state_dict[tensor_key],
                 target_expert_count=report.target_expert_count,
             )
 
@@ -342,10 +345,28 @@ def _with_updated_num_experts(
         raise TopologyMismatchError("checkpoint config must be a JSON object")
     text_config = payload.get("text_config")
     if isinstance(text_config, dict):
+        _validate_top_k_experts(text_config, target_expert_count=target_expert_count)
         text_config["num_experts"] = target_expert_count
+    _validate_top_k_experts(payload, target_expert_count=target_expert_count)
     if isinstance(payload.get("num_experts"), int):
         payload["num_experts"] = target_expert_count
     return payload
+
+
+def _validate_top_k_experts(
+    config_payload: Mapping[str, object],
+    *,
+    target_expert_count: int,
+) -> None:
+    top_k_experts = config_payload.get("top_k_experts")
+    if isinstance(top_k_experts, int) and top_k_experts > target_expert_count:
+        raise TopologyMismatchError(
+            "export config top_k_experts cannot exceed pruned num_experts",
+            details={
+                "top_k_experts": top_k_experts,
+                "target_expert_count": target_expert_count,
+            },
+        )
 
 
 def _write_apply_sidecars(*, apply_result: ApplyResult, output_root: Path) -> tuple[str, str]:

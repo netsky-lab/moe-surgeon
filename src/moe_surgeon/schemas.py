@@ -900,6 +900,11 @@ class RunArtifactManifest(_SchemaBase):
         payload = self.to_dict()
         payload["started_at"] = CANONICAL_DEFAULT_TIMESTAMP
         payload["finished_at"] = None
+        if isinstance(payload.get("model_handle"), dict):
+            payload["model_handle"] = _canonicalize_manifest_model_handle_payload(payload["model_handle"])
+        output_paths = payload.get("output_paths")
+        if isinstance(output_paths, dict):
+            payload["output_paths"] = _canonicalize_manifest_output_paths(output_paths)
         metadata = dict(self.metadata)
         metadata.pop("canonical_manifest_digest", None)
         metadata.pop("canonical_artifact_digest", None)
@@ -916,6 +921,20 @@ class RunArtifactManifest(_SchemaBase):
         """Return a timestamp-free digest for reproducible manifests."""
 
         return sha256(to_json(self.canonical_digest_payload()).encode("utf-8")).hexdigest()
+
+
+def _canonicalize_manifest_model_handle_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
+    normalized = dict(payload)
+    normalized["source_path"] = None
+    return normalized
+
+
+def _canonicalize_manifest_output_paths(output_paths: Mapping[str, Any]) -> Dict[str, str]:
+    normalized: Dict[str, str] = {}
+    for key, value in output_paths.items():
+        text = str(value)
+        normalized[str(key)] = Path(text).name if Path(text).is_absolute() else text
+    return normalized
 
 
 SchemaType = Union[

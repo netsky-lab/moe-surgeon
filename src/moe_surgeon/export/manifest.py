@@ -27,6 +27,7 @@ def write_export_manifest(
     """Write the canonical run manifest and literal checksum listing."""
 
     output_root = Path(output_dir).expanduser().resolve()
+    source_expert_count, target_expert_count = _expert_count_snapshot(apply_result=apply_result)
     manifest = RunArtifactManifest(
         run_id=export_result.export_id,
         command="export",
@@ -46,6 +47,8 @@ def write_export_manifest(
             "source_metadata_digest": apply_result.source_metadata_digest,
             "source_checkpoint_fingerprint": apply_result.source_checkpoint_fingerprint,
             "export_payload_digest": export_result.canonical_digest,
+            "source_expert_count": source_expert_count,
+            "target_expert_count": target_expert_count,
         },
     )
     manifest = replace(
@@ -81,6 +84,14 @@ def _sha256_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _expert_count_snapshot(*, apply_result: ApplyResult) -> tuple[int, int]:
+    source_counts = {report.source_expert_count for report in apply_result.layer_reports}
+    target_counts = {report.target_expert_count for report in apply_result.layer_reports}
+    if len(source_counts) != 1 or len(target_counts) != 1:
+        raise ValueError("export manifest requires uniform Gemma4 expert counts across layer reports")
+    return next(iter(source_counts)), next(iter(target_counts))
 
 
 __all__ = ["write_export_manifest"]

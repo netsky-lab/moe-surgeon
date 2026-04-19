@@ -264,6 +264,29 @@ def test_manifest_canonical_digest_ignores_runtime_timestamps() -> None:
     assert first.versioned_manifest_id != second.versioned_manifest_id
 
 
+def test_manifest_canonical_digest_ignores_location_only_fields() -> None:
+    base_handle = dict(
+        model_id="google/gemma-4-27b",
+        revision="rev-123",
+        backend_name="gemma4",
+        metadata={"checkpoint": "abc"},
+    )
+    first = RunArtifactManifest(
+        run_id="run-001",
+        command="export",
+        model_handle=ModelHandle(**base_handle, source_path="/tmp/export-one/source"),
+        output_paths={"config": "/tmp/export-one/config.json", "weights": "/tmp/export-one/model.safetensors"},
+    )
+    second = RunArtifactManifest(
+        run_id="run-001",
+        command="export",
+        model_handle=ModelHandle(**base_handle, source_path="/tmp/export-two/source"),
+        output_paths={"config": "/tmp/export-two/config.json", "weights": "/tmp/export-two/model.safetensors"},
+    )
+
+    assert first.canonical_digest == second.canonical_digest
+
+
 def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
     plan = PrunePlan.from_dict(
         {
