@@ -27,6 +27,7 @@ def _gemma4_config() -> dict[str, object]:
         "text_config": {
             "num_hidden_layers": 2,
             "hidden_size": 3,
+            "intermediate_size": 6,
             "enable_moe_block": True,
             "num_experts": 4,
             "top_k_experts": 2,

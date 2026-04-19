@@ -10,7 +10,7 @@ import pytest
 from moe_surgeon.export import run_export
 from moe_surgeon.models.backend import LoadedBackendBundle, resolve_backend
 from moe_surgeon.models.checkpoints import open_local_safetensors_checkpoint
-from moe_surgeon.models.errors import TopologyMismatchError
+from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gemma4 import Gemma4Backend
 from moe_surgeon.prune import apply_prune_plan
 from moe_surgeon.schemas import ModelHandle
@@ -42,6 +42,48 @@ def test_run_export_rejects_tensor_shapes_inconsistent_with_pruned_config(tmp_pa
     export_dir = tmp_path / "invalid-export"
 
     with pytest.raises(TopologyMismatchError, match="router projection shape mismatch"):
+        run_export(invalid, output_dir=export_dir)
+
+    assert not export_dir.exists()
+
+
+def test_run_export_rejects_dense_passthrough_topology_damage_before_writing(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_checkpoint(source_root)
+    applied = apply_prune_plan(source_root, plan=_plan(), dry_run=False, output_dir=tmp_path / "applied")
+    invalid_state = dict(applied.derived_state_dict or {})
+    invalid_state["model.language_model.layers.0.mlp.down_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.down_proj.weight"
+    ].new_zeros((4, 6))
+    invalid = replace(applied, derived_state_dict=invalid_state)
+    export_dir = tmp_path / "invalid-export"
+
+    with pytest.raises(ShapeInvariantViolationError, match="mlp.down_proj.weight shape mismatch"):
+        run_export(invalid, output_dir=export_dir)
+
+    assert not export_dir.exists()
+
+
+def test_run_export_rejects_config_inconsistent_dense_passthrough_width_before_writing(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_checkpoint(source_root)
+    applied = apply_prune_plan(source_root, plan=_plan(), dry_run=False, output_dir=tmp_path / "applied")
+    invalid_state = dict(applied.derived_state_dict or {})
+    invalid_state["model.language_model.layers.0.mlp.down_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.down_proj.weight"
+    ].new_zeros((3, 5))
+    invalid_state["model.language_model.layers.0.mlp.gate_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.gate_proj.weight"
+    ].new_zeros((5, 3))
+    invalid_state["model.language_model.layers.0.mlp.up_proj.weight"] = invalid_state[
+        "model.language_model.layers.0.mlp.up_proj.weight"
+    ].new_zeros((5, 3))
+    invalid = replace(applied, derived_state_dict=invalid_state)
+    export_dir = tmp_path / "invalid-export"
+
+    with pytest.raises(ShapeInvariantViolationError, match="mlp.down_proj.weight shape mismatch"):
         run_export(invalid, output_dir=export_dir)
 
     assert not export_dir.exists()
