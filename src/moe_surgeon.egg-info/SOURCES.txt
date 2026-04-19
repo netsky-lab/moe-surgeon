@@ -18,6 +18,9 @@ src/moe_surgeon/analysis/scan.py
 src/moe_surgeon/cli/__init__.py
 src/moe_surgeon/cli/main.py
 src/moe_surgeon/export/__init__.py
+src/moe_surgeon/export/manifest.py
+src/moe_surgeon/export/runner.py
+src/moe_surgeon/export/safetensors_writer.py
 src/moe_surgeon/models/__init__.py
 src/moe_surgeon/models/backend.py
 src/moe_surgeon/models/checkpoints.py
@@ -34,6 +37,7 @@ src/moe_surgeon/runtime/bench.py
 src/moe_surgeon/runtime/profiler.py
 tests/test_analysis_scan.py
 tests/test_cli.py
+tests/test_export_pipeline.py
 tests/test_models_checkpoints.py
 tests/test_models_gemma4.py
 tests/test_models_registry.py
