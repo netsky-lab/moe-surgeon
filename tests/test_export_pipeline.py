@@ -178,6 +178,23 @@ def test_run_export_preserves_sharded_transformers_compatible_topology(tmp_path:
     assert topology[0].expert_count == 2
 
 
+def test_run_export_returns_sorted_shard_filenames_for_deterministic_manifests(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_sharded_checkpoint(source_root)
+    applied = apply_prune_plan(source_root, plan=_plan(), dry_run=False, output_dir=tmp_path / "applied")
+
+    export_dir = tmp_path / "export"
+    result = run_export(applied, output_dir=export_dir)
+
+    assert result.sharded is True
+    assert result.weight_files == tuple(sorted(result.weight_files))
+    assert result.weight_files == (
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+    )
+
+
 def test_run_export_rejects_non_apply_result_contract(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="ApplyResult"):
         run_export({"derived_state_dict": {}}, output_dir=tmp_path / "export")

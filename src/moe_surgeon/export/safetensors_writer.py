@@ -394,7 +394,9 @@ def _write_weights(
             source_is_single_file=source_is_single_file,
         ),
     )
-    for filename, tensor_keys in split.filename_to_tensors.items():
+    ordered_filenames = tuple(sorted(split.filename_to_tensors))
+    for filename in ordered_filenames:
+        tensor_keys = split.filename_to_tensors[filename]
         shard = {tensor_key: sorted_state[tensor_key] for tensor_key in tensor_keys}
         save_file(shard, str(output_root / filename), metadata={"format": "pt"})
     if not split.is_sharded:
@@ -406,7 +408,7 @@ def _write_weights(
     }
     (output_root / _INDEX_FILENAME).write_text(to_json(index_payload), encoding="utf-8")
     return (
-        tuple(split.filename_to_tensors),
+        ordered_filenames,
         dict(sorted(split.tensor_to_filename.items())),
         True,
     )
