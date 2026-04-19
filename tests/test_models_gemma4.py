@@ -221,6 +221,20 @@ def test_gemma4_backend_validate_bundle_rejects_missing_dense_hybrid_keys() -> N
     assert "mlp.down_proj.weight" in str(exc_info.value)
 
 
+def test_gemma4_backend_validate_bundle_rejects_dense_projection_shape_mismatch() -> None:
+    backend = Gemma4Backend()
+    config = _gemma4_config(moe_layer_indices=[0])
+    state_dict = _layer_state(0)
+    state_dict["model.language_model.layers.0.mlp.down_proj.weight"] = FakeTensor((2817, 2112))
+    bundle = _bundle(config=config, state_dict=state_dict)
+
+    with pytest.raises(ShapeInvariantViolationError, match="mlp.down_proj.weight shape mismatch") as exc_info:
+        backend.validate_bundle(bundle)
+
+    assert "expected_shape=2816x2112" in str(exc_info.value)
+    assert "actual_shape=2817x2112" in str(exc_info.value)
+
+
 def test_gemma4_backend_detects_unexpected_moe_layer_tensor_prefixes() -> None:
     backend = Gemma4Backend()
     config = _gemma4_config(moe_layer_indices=[1, 3])

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Broadened export preflight validation in
+  `src/moe_surgeon/export/safetensors_writer.py` to run the Gemma4 backend's
+  full `validate_bundle()` contract against the derived-state bundle before any
+  output directory is prepared, so passthrough topology damage is rejected
+  before write-out.
+- Extended `src/moe_surgeon/models/gemma4.py` bundle validation to check dense
+  hybrid companion tensor shapes (`mlp.*` and feedforward layernorm weights)
+  alongside the existing router and expert invariants.
+- Added regressions in `tests/test_export_pipeline.py` and
+  `tests/test_models_gemma4.py` covering dense passthrough shape corruption and
+  the corresponding backend/export failures.
 - Wired the real CLI workflow chain in `src/moe_surgeon/cli/main.py` so
   `scan`, `bench`, `prune`, and `export` now call the analysis/runtime/planner/
   apply/export modules instead of placeholder echo handlers, enforce artifact

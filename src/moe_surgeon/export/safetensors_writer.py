@@ -88,16 +88,23 @@ def write_safetensors_artifact(
 
     source_checkpoint = open_local_safetensors_checkpoint(apply_result.source_checkpoint_dir)
     backend = _resolve_export_backend(source_checkpoint)
+    target_expert_count = _uniform_target_expert_count(apply_result.layer_reports)
+    export_config = _with_updated_num_experts(
+        source_checkpoint.config,
+        target_expert_count=target_expert_count,
+    )
     validation_bundle = _build_validation_bundle(
         checkpoint=source_checkpoint,
         backend=backend,
         state=derived_state_dict,
+        config=export_config,
     )
     topology = backend.extract_topology(
         _build_validation_bundle(
             checkpoint=source_checkpoint,
             backend=backend,
             state={item.tensor_key: item for item in source_checkpoint.tensor_metadata()},
+            config=source_checkpoint.config,
         )
     )
     _validate_export_state(
@@ -177,6 +184,7 @@ def _build_validation_bundle(
     checkpoint: LocalSafetensorsCheckpoint,
     backend: Gemma4Backend,
     state: Mapping[str, object],
+    config: Mapping[str, object],
 ) -> LoadedBackendBundle:
     return LoadedBackendBundle(
         backend_name=backend.name,
@@ -187,7 +195,7 @@ def _build_validation_bundle(
             source_path=str(checkpoint.checkpoint_dir),
         ),
         model=object(),
-        config=checkpoint.config,
+        config=config,
         metadata={"state_dict": state, "backend_version": backend.backend_version},
     )
 
@@ -200,6 +208,8 @@ def _validate_export_state(
     topology: Sequence[LayerTopology],
     validation_bundle: LoadedBackendBundle,
 ) -> None:
+    backend.validate_bundle(validation_bundle)
+
     source_keys = checkpoint.state_keys()
     derived_state_dict = apply_result.derived_state_dict
     assert derived_state_dict is not None
