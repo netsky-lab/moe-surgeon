@@ -392,6 +392,11 @@
 - Expanded `tests/test_models_gemma4.py` with offline regressions for below-floor runtime failures, missing-symbol failures at the supported floor, and a packaging-floor consistency check against `pyproject.toml`.
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
+## 2026-04-19
+- Hardened CLI workflow preflight in `src/moe_surgeon/cli/main.py` with explicit artifact/output validation for scan, bench, prune, and export, deterministic seed resolution across chained artifacts, and clearer `error[code:domain]` command failures for artifact-preflight versus backend/topology issues.
+- Added `ArtifactValidationError` in `src/moe_surgeon/models/errors.py` plus a shared `resolve_deterministic_seed()` helper in `src/moe_surgeon/schemas.py` so command handlers can reject conflicting workflow seeds and preserve reproducible run-manifest metadata.
+- Expanded `tests/test_cli.py` and `tests/test_schemas.py` with regressions covering pre-existing output-path rejection, seed-conflict failures, backend mismatch diagnostics, and deterministic seed helper behavior.
+
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
   tracked symlinks outside the `.tmp/` quarantine.

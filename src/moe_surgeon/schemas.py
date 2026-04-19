@@ -156,6 +156,25 @@ def validate_shape_tuple(
     return _ensure_shape_tuple(value, name=name, allow_empty=allow_empty, require_last=require_last)
 
 
+def resolve_deterministic_seed(
+    *values: int | None,
+    name: str = "seed",
+) -> int:
+    """Resolve a deterministic workflow seed from optional seed candidates."""
+
+    normalized: list[int] = []
+    for index, value in enumerate(values):
+        if value is None:
+            continue
+        normalized.append(_ensure_non_negative_int(value, name=f"{name}[{index}]"))
+    non_zero = sorted({value for value in normalized if value != 0})
+    if len(non_zero) > 1:
+        raise SchemaValidationError(f"{name} values must agree for deterministic workflow")
+    if non_zero:
+        return non_zero[0]
+    return 0 if not normalized else normalized[0]
+
+
 def _canonicalize_metadata(value: Mapping[str, Any] | None) -> Dict[str, SchemaKey]:
     if value is None:
         return {}
@@ -1163,6 +1182,7 @@ __all__ = [
     "SchemaType",
     "validate_shape_tuple",
     "validate_layer_ref",
+    "resolve_deterministic_seed",
     "ModelHandle",
     "LayerTopology",
     "RouterState",

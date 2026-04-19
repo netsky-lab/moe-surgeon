@@ -10,6 +10,7 @@ import click
 
 from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
 from moe_surgeon.models.errors import (
+    ArtifactValidationError,
     BackendMismatchError,
     ModelError,
     SchemaValidationError,
@@ -27,11 +28,12 @@ if TYPE_CHECKING:
 F = TypeVar("F", bound=Callable[..., object])
 
 _COMMAND_EXIT_CODES: dict[type[BaseException], int] = {
+    ArtifactValidationError: 24,
     UnsupportedModelError: 20,
     BackendMismatchError: 21,
     TopologyMismatchError: 22,
     ShapeInvariantViolationError: 23,
-    SchemaValidationError: 24,
+    SchemaValidationError: 25,
 }
 
 
@@ -103,7 +105,8 @@ def _resolve_command_error_code(exc: BaseException) -> int:
 
 def _raise_command_failure(exc: BaseException) -> None:
     exit_code = _resolve_command_error_code(exc)
-    click.echo(f"error[{exit_code}]: {exc}", err=True)
+    error_label = getattr(exc, "error_code", "unhandled")
+    click.echo(f"error[{exit_code}:{error_label}]: {exc}", err=True)
     raise click.exceptions.Exit(exit_code)
 
 
@@ -232,6 +235,66 @@ def _ensure_output_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _prepare_output_file_path(
+    path: Path,
+    *,
+    command: str,
+    model_id: str | None = None,
+) -> Path:
+    target = path.expanduser()
+    if target.exists():
+        raise ArtifactValidationError(
+            f"{command} output_path must not already exist",
+            model_id=model_id,
+            details={"output_path": str(target)},
+        )
+    if target.parent.exists() and not target.parent.is_dir():
+        raise ArtifactValidationError(
+            f"{command} output_path parent must be a directory",
+            model_id=model_id,
+            details={"output_parent": str(target.parent)},
+        )
+    _ensure_output_parent(target)
+    return target
+
+
+def _prepare_output_dir_path(
+    path: Path,
+    *,
+    command: str,
+    model_id: str | None = None,
+    input_dirs: Sequence[Path] = (),
+) -> Path:
+    target = path.expanduser()
+    normalized_inputs = {candidate.expanduser().resolve() for candidate in input_dirs}
+    try:
+        target_resolved = target.resolve(strict=False)
+    except OSError:
+        target_resolved = target
+    if target_resolved in normalized_inputs:
+        raise ArtifactValidationError(
+            f"{command} output_dir must differ from input artifact directories",
+            model_id=model_id,
+            details={"output_dir": str(target)},
+        )
+    if target.exists():
+        if not target.is_dir():
+            raise ArtifactValidationError(
+                f"{command} output_dir must be a directory path",
+                model_id=model_id,
+                details={"output_dir": str(target)},
+            )
+        if any(target.iterdir()):
+            raise ArtifactValidationError(
+                f"{command} output_dir must be empty",
+                model_id=model_id,
+                details={"output_dir": str(target)},
+            )
+    else:
+        target.mkdir(parents=True, exist_ok=False)
+    return target
+
+
 def _write_manifest_sidecar(path: Path, manifest: "RunArtifactManifest") -> Path:
     from moe_surgeon.schemas import to_json
 
@@ -272,6 +335,62 @@ def _validate_context_model_handle(shared: CliContext, model_handle: "ModelHandl
         )
 
 
+def _validate_model_handle_compatibility(
+    expected: "ModelHandle",
+    actual: "ModelHandle",
+    *,
+    message: str,
+) -> None:
+    details: dict[str, object] = {}
+    if expected.model_id != actual.model_id:
+        details["expected_model_id"] = expected.model_id
+        details["actual_model_id"] = actual.model_id
+    if expected.revision != actual.revision:
+        details["expected_revision"] = expected.revision or "none"
+        details["actual_revision"] = actual.revision or "none"
+    if expected.backend_name not in (None, actual.backend_name):
+        details["expected_backend_name"] = expected.backend_name
+        details["actual_backend_name"] = actual.backend_name or "none"
+    if expected.dtype not in (None, actual.dtype):
+        details["expected_dtype"] = expected.dtype
+        details["actual_dtype"] = actual.dtype or "none"
+    if details:
+        raise BackendMismatchError(
+            message,
+            model_id=expected.model_id,
+            backend_name=actual.backend_name,
+            details=details,
+        )
+
+
+def _resolve_workflow_seed(
+    *,
+    command: str,
+    shared_seed: int | None,
+    manifests: Sequence["RunArtifactManifest"] = (),
+    model_handles: Sequence["ModelHandle"] = (),
+    model_id: str | None = None,
+) -> int:
+    from moe_surgeon.schemas import resolve_deterministic_seed
+
+    candidates: list[tuple[str, int | None]] = []
+    candidates.append(("cli_seed", shared_seed))
+    for index, manifest in enumerate(manifests):
+        candidates.append((f"manifest_{index}", manifest.seed))
+        if manifest.model_handle is not None:
+            candidates.append((f"manifest_{index}_model_handle", manifest.model_handle.seed))
+    for index, handle in enumerate(model_handles):
+        candidates.append((f"model_handle_{index}", handle.seed))
+    try:
+        return resolve_deterministic_seed(*(value for _, value in candidates), name=f"{command}_seed")
+    except SchemaValidationError as exc:
+        raise ArtifactValidationError(
+            f"{command} seed must be deterministic across CLI context and artifacts",
+            model_id=model_id,
+            details={label: str(value) for label, value in candidates if value is not None},
+        ) from exc
+
+
 def _validate_topology_compatibility(
     expected_layers: Sequence["LayerTopology"],
     actual_layers: Sequence["LayerTopology"],
@@ -302,15 +421,17 @@ def _validate_scan_and_bench_compatibility(
     bench_handle = bench_result.manifest.model_handle
     if scan_handle is None or bench_handle is None:
         raise TopologyMismatchError("scan and bench artifacts must include model_handle")
-    if scan_handle.model_fingerprint != bench_handle.model_fingerprint:
-        raise TopologyMismatchError(
-            "scan and bench artifacts target different model fingerprints",
-            model_id=scan_handle.model_id,
-            details={
-                "scan_model_fingerprint": scan_handle.model_fingerprint,
-                "bench_model_fingerprint": bench_handle.model_fingerprint,
-            },
-        )
+    _validate_model_handle_compatibility(
+        scan_handle,
+        bench_handle,
+        message="scan and bench artifacts target different model/backend identities",
+    )
+    _resolve_workflow_seed(
+        command="prune",
+        shared_seed=None,
+        manifests=(scan_result.manifest, bench_result.manifest),
+        model_id=scan_handle.model_id,
+    )
     _validate_topology_compatibility(
         scan_result.layers,
         bench_result.topology,
@@ -376,13 +497,32 @@ def _run_scan(request: ScanCommandRequest) -> int:
     )
 
     source_path = _ensure_local_checkpoint_source(request.shared, command="scan")
-    output_path = request.output_path or _default_scan_output_path(request.shared)
-    manifest_path = _run_manifest_sidecar_path(output_path, command="scan")
     bundle, backend = load_local_scan_bundle(source_path)
     _validate_context_model_handle(request.shared, bundle.model_handle)
+    resolved_seed = _resolve_workflow_seed(
+        command="scan",
+        shared_seed=request.shared.seed,
+        model_handles=(bundle.model_handle,),
+        model_id=bundle.model_handle.model_id,
+    )
+    output_path = _prepare_output_file_path(
+        request.output_path or _default_scan_output_path(request.shared),
+        command="scan",
+        model_id=bundle.model_handle.model_id,
+    )
+    manifest_path = _prepare_output_file_path(
+        _run_manifest_sidecar_path(output_path, command="scan"),
+        command="scan",
+        model_id=bundle.model_handle.model_id,
+    )
     result = scan_model(bundle, backend=backend)
+    if result.manifest.model_handle is None:
+        raise ArtifactValidationError("scan result must include model_handle", model_id=bundle.model_handle.model_id)
+    manifest_model_handle = replace(result.manifest.model_handle, seed=resolved_seed)
     artifact_manifest = replace(
         result.manifest,
+        model_handle=manifest_model_handle,
+        seed=resolved_seed,
         output_paths={"scan_artifact": str(output_path)},
         metadata={
             **dict(result.manifest.metadata),
@@ -420,8 +560,29 @@ def _run_bench(request: BenchCommandRequest) -> int:
     if scan_handle is None:
         raise TopologyMismatchError("scan artifact must include model_handle")
     _validate_context_model_handle(request.shared, scan_handle)
+    resolved_seed = _resolve_workflow_seed(
+        command="bench",
+        shared_seed=request.shared.seed,
+        manifests=(scan_result.manifest,),
+        model_id=scan_handle.model_id,
+    )
 
     backend, bundle = _load_runtime_bundle(request.shared)
+    _validate_model_handle_compatibility(
+        scan_handle,
+        bundle.model_handle,
+        message="scan artifact does not match runtime-loaded model/backend identity",
+    )
+    output_path = _prepare_output_file_path(
+        request.output_path or _default_bench_output_path(request.shared),
+        command="bench",
+        model_id=bundle.model_handle.model_id,
+    )
+    manifest_path = _prepare_output_file_path(
+        _run_manifest_sidecar_path(output_path, command="bench"),
+        command="bench",
+        model_id=bundle.model_handle.model_id,
+    )
     bundle_topology = tuple(backend.extract_topology(bundle))
     _validate_topology_compatibility(
         scan_result.layers,
@@ -475,16 +636,19 @@ def _run_bench(request: BenchCommandRequest) -> int:
                 },
                 parent_artifacts=(str(request.scan_artifact),),
                 output_paths={
-                    "benchmark_artifact": str(request.output_path or _default_bench_output_path(request.shared))
+                    "benchmark_artifact": str(output_path)
                 },
-                seed=request.shared.seed,
+                seed=resolved_seed,
             )
         )
 
-    output_path = request.output_path or _default_bench_output_path(request.shared)
-    manifest_path = _run_manifest_sidecar_path(output_path, command="bench")
+    if result.manifest.model_handle is None:
+        raise ArtifactValidationError("benchmark result must include model_handle", model_id=bundle.model_handle.model_id)
+    manifest_model_handle = replace(result.manifest.model_handle, seed=resolved_seed)
     artifact_manifest = replace(
         result.manifest,
+        model_handle=manifest_model_handle,
+        seed=resolved_seed,
         output_paths={"benchmark_artifact": str(output_path)},
         parent_artifacts=(str(request.scan_artifact),),
         metadata={
@@ -531,23 +695,18 @@ def _run_prune(request: PruneCommandRequest) -> int:
         raise TopologyMismatchError("scan artifact must include model_handle")
     _validate_context_model_handle(request.shared, scan_handle)
 
-    output_dir = request.output_dir or _default_prune_output_dir(request.shared)
-    output_root = output_dir.expanduser().resolve()
-    if output_root.exists():
-        if not output_root.is_dir():
-            raise TopologyMismatchError(
-                "prune output_dir must be a directory path",
-                model_id=scan_handle.model_id,
-                details={"output_dir": str(output_root)},
-            )
-        if any(output_root.iterdir()):
-            raise TopologyMismatchError(
-                "prune output_dir must be empty",
-                model_id=scan_handle.model_id,
-                details={"output_dir": str(output_root)},
-            )
-    else:
-        output_root.mkdir(parents=True, exist_ok=False)
+    resolved_seed = _resolve_workflow_seed(
+        command="prune",
+        shared_seed=request.shared.seed,
+        manifests=(scan_result.manifest, bench_result.manifest),
+        model_id=scan_handle.model_id,
+    )
+    output_root = _prepare_output_dir_path(
+        request.output_dir or _default_prune_output_dir(request.shared),
+        command="prune",
+        model_id=scan_handle.model_id,
+        input_dirs=(source_path,),
+    )
 
     constraints = PlannerConstraints(
         global_target_experts=request.target_experts,
@@ -571,7 +730,7 @@ def _run_prune(request: PruneCommandRequest) -> int:
         command="prune",
         model_handle=scan_handle,
         top_k=scan_result.manifest.top_k,
-        seed=request.shared.seed or 0,
+        seed=resolved_seed,
         input_checksums={
             "scan_manifest_digest": scan_result.manifest.canonical_digest,
             "bench_manifest_digest": bench_result.manifest.canonical_digest,
@@ -609,12 +768,24 @@ def _run_export(request: ExportCommandRequest) -> int:
         raise TopologyMismatchError("export requires --apply-artifact-dir")
     apply_result = validate_apply_result(load_apply_result(request.apply_artifact_dir), require_materialized=True)
     _validate_context_model_handle(request.shared, apply_result.model_handle)
-    output_dir = request.output_dir or _default_export_output_dir(request.shared)
+    resolved_seed = _resolve_workflow_seed(
+        command="export",
+        shared_seed=request.shared.seed,
+        model_handles=(apply_result.model_handle,),
+        model_id=apply_result.model_handle.model_id,
+    )
+    output_dir = _prepare_output_dir_path(
+        request.output_dir or _default_export_output_dir(request.shared),
+        command="export",
+        model_id=apply_result.model_handle.model_id,
+        input_dirs=(Path(request.apply_artifact_dir),),
+    )
     export_result = run_export_from_apply_artifact(request.apply_artifact_dir, output_dir=output_dir)
     click.echo("command=export")
     click.echo(f"apply_artifact_dir={request.apply_artifact_dir}")
     click.echo(f"output_dir={output_dir}")
     click.echo(f"export_id={export_result.export_id}")
+    click.echo(f"seed={resolved_seed}")
     click.echo(f"run_manifest={Path(output_dir) / 'run-manifest.json'}")
     return 0
 

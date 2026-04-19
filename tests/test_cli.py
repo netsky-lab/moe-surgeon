@@ -202,6 +202,22 @@ def test_scan_command_writes_manifest_sidecar(tmp_path: Path) -> None:
     assert output_path.with_name("scan.run-manifest.json").is_file()
 
 
+def test_scan_command_rejects_existing_output_path(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    output_path = tmp_path / "scan.json"
+    output_path.write_text("{}", encoding="utf-8")
+
+    result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(output_path)])
+
+    assert result.exit_code == 24
+    assert "error[24:artifact_validation]" in result.output
+    assert "scan output_path must not already exist" in result.output
+
+
 @pytest.mark.parametrize(
     ("command", "expected_output"),
     [
@@ -279,7 +295,12 @@ def test_bench_command_accepts_prompt_batching_options(
 
     fake_bundle = LoadedBackendBundle(
         backend_name="fake",
-        model_handle=ModelHandle(model_id="google/gemma-4-27b", backend_name="fake"),
+        model_handle=ModelHandle(
+            model_id=scan_artifact.manifest.model_handle.model_id,
+            revision=scan_artifact.manifest.model_handle.revision,
+            backend_name=scan_artifact.manifest.model_handle.backend_name,
+            seed=scan_artifact.manifest.model_handle.seed,
+        ),
         model=FakeModel(),
         config={},
         tokenizer=FakeTokenizer(),
@@ -325,6 +346,89 @@ def test_bench_command_accepts_prompt_batching_options(
     assert "prompt_batches=1" in result.output
     assert "batch_size=2" in result.output
     assert (tmp_path / "bench.json").is_file()
+
+
+def test_bench_command_rejects_conflicting_seed_from_scan_artifact(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(
+        cli,
+        ["--source-path", str(checkpoint_root), "--seed", "3", "scan", "--output", str(scan_path)],
+    )
+    assert scan_result.exit_code == 0, scan_result.output
+
+    result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "--seed",
+            "7",
+            "bench",
+            "--scan-artifact",
+            str(scan_path),
+            "--prompt",
+            "alpha",
+            "--output",
+            str(tmp_path / "bench.json"),
+        ],
+    )
+
+    assert result.exit_code == 24
+    assert "error[24:artifact_validation]" in result.output
+    assert "bench seed must be deterministic across CLI context and artifacts" in result.output
+
+
+def test_bench_command_rejects_runtime_backend_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(scan_path)])
+    assert scan_result.exit_code == 0, scan_result.output
+    scan_artifact = load_scan_artifact(scan_path)
+
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+    fake_bundle = LoadedBackendBundle(
+        backend_name="fake",
+        model_handle=ModelHandle(model_id="google/gemma-4-27b", backend_name="fake-other"),
+        model=object(),
+        config={},
+        tokenizer=FakeTokenizer(),
+    )
+
+    def _fake_load_runtime_bundle(shared: object) -> tuple[FakeBackend, LoadedBackendBundle]:
+        del shared
+        return backend, fake_bundle
+
+    monkeypatch.setattr("moe_surgeon.cli.main._load_runtime_bundle", _fake_load_runtime_bundle)
+    monkeypatch.setattr(backend, "extract_topology", lambda bundle: scan_artifact.layers, raising=False)
+
+    result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "bench",
+            "--scan-artifact",
+            str(scan_path),
+            "--prompt",
+            "alpha",
+            "--output",
+            str(tmp_path / "bench.json"),
+        ],
+    )
+
+    assert result.exit_code == 21
+    assert "error[21:backend_mismatch]" in result.output
+    assert "scan artifact does not match runtime-loaded model/backend identity" in result.output
 
 
 def test_prune_and_export_commands_chain_artifacts(tmp_path: Path) -> None:

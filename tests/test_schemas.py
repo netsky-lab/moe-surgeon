@@ -20,6 +20,7 @@ from moe_surgeon.schemas import (
     sort_experts,
     validate_shape_tuple,
     validate_layer_ref,
+    resolve_deterministic_seed,
 )
 
 
@@ -285,6 +286,16 @@ def test_manifest_canonical_digest_ignores_location_only_fields() -> None:
     )
 
     assert first.canonical_digest == second.canonical_digest
+
+
+def test_resolve_deterministic_seed_accepts_zero_and_matching_values() -> None:
+    assert resolve_deterministic_seed(None, 0, 7, 7, name="workflow") == 7
+    assert resolve_deterministic_seed(None, 0, 0, name="workflow") == 0
+
+
+def test_resolve_deterministic_seed_rejects_conflicting_non_zero_values() -> None:
+    with pytest.raises(SchemaValidationError, match="workflow values must agree"):
+        resolve_deterministic_seed(3, 7, name="workflow")
 
 
 def test_from_dict_coerces_list_payloads_for_plan_components() -> None:
