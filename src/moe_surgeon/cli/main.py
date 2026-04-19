@@ -2,15 +2,37 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Callable, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Sequence, TypeVar, cast
 
 import click
 
 from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
+from moe_surgeon.models.errors import (
+    BackendMismatchError,
+    ModelError,
+    SchemaValidationError,
+    ShapeInvariantViolationError,
+    TopologyMismatchError,
+    UnsupportedModelError,
+)
+
+if TYPE_CHECKING:
+    from moe_surgeon.analysis.scan import StaticScanResult
+    from moe_surgeon.models.backend import LoadedBackendBundle, ModelBackend
+    from moe_surgeon.runtime.profiler import BenchmarkResult
+    from moe_surgeon.schemas import LayerTopology, ModelHandle, RunArtifactManifest
 
 F = TypeVar("F", bound=Callable[..., object])
+
+_COMMAND_EXIT_CODES: dict[type[BaseException], int] = {
+    UnsupportedModelError: 20,
+    BackendMismatchError: 21,
+    TopologyMismatchError: 22,
+    ShapeInvariantViolationError: 23,
+    SchemaValidationError: 24,
+}
 
 
 @dataclass(frozen=True)
@@ -39,6 +61,7 @@ class BenchCommandRequest:
     """Parsed options for the ``bench`` command."""
 
     shared: CliContext
+    scan_artifact: Path | None
     prompts: tuple[str, ...]
     batch_size: int
     capture_router_scores: bool
@@ -53,6 +76,8 @@ class PruneCommandRequest:
     scan_artifact: Path | None
     bench_artifact: Path | None
     strategy: str
+    target_experts: int | None
+    min_experts_per_layer: int
     output_dir: Path | None
 
 
@@ -67,6 +92,19 @@ class ExportCommandRequest:
 
 def _path_text(path: Path | None) -> str:
     return "-" if path is None else str(path)
+
+
+def _resolve_command_error_code(exc: BaseException) -> int:
+    for error_type, exit_code in _COMMAND_EXIT_CODES.items():
+        if isinstance(exc, error_type):
+            return exit_code
+    return 1
+
+
+def _raise_command_failure(exc: BaseException) -> None:
+    exit_code = _resolve_command_error_code(exc)
+    click.echo(f"error[{exit_code}]: {exc}", err=True)
+    raise click.exceptions.Exit(exit_code)
 
 
 def _root_option(*param_decls: str, **kwargs: Any) -> Callable[[F], F]:
@@ -155,44 +193,429 @@ def _resolve_shared_context(
     )
 
 
+def _default_artifact_root(shared: CliContext) -> Path:
+    return shared.artifact_root if shared.artifact_root is not None else Path("artifacts")
+
+
+def _default_scan_output_path(shared: CliContext) -> Path:
+    return _default_artifact_root(shared) / "scan" / "scan.json"
+
+
+def _default_bench_output_path(shared: CliContext) -> Path:
+    return _default_artifact_root(shared) / "bench" / "bench.json"
+
+
+def _default_prune_output_dir(shared: CliContext) -> Path:
+    return _default_artifact_root(shared) / "prune"
+
+
+def _default_export_output_dir(shared: CliContext) -> Path:
+    return _default_artifact_root(shared) / "export"
+
+
+def _run_manifest_sidecar_path(artifact_path: Path, *, command: str) -> Path:
+    if artifact_path.suffix:
+        return artifact_path.with_name(f"{artifact_path.stem}.run-manifest.json")
+    return artifact_path / f"{command}-run-manifest.json"
+
+
+def _ensure_local_checkpoint_source(shared: CliContext, *, command: str) -> Path:
+    if shared.source_path is None:
+        raise TopologyMismatchError(
+            f"{command} requires --source-path pointing to a local safetensors checkpoint",
+            details={"command": command},
+        )
+    return Path(shared.source_path)
+
+
+def _ensure_output_parent(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _write_manifest_sidecar(path: Path, manifest: "RunArtifactManifest") -> Path:
+    from moe_surgeon.schemas import to_json
+
+    final_manifest = manifest.finalized()
+    _ensure_output_parent(path)
+    path.write_text(to_json(final_manifest), encoding="utf-8")
+    return path
+
+
+def _topology_signature(layer: "LayerTopology") -> tuple[int, int, int, int]:
+    return (
+        layer.layer_index,
+        layer.expert_count,
+        layer.top_k,
+        layer.hidden_size,
+    )
+
+
+def _validate_context_model_handle(shared: CliContext, model_handle: "ModelHandle") -> None:
+    if shared.model_id is not None and shared.model_id != model_handle.model_id:
+        raise TopologyMismatchError(
+            "CLI model_id does not match artifact model_id",
+            model_id=model_handle.model_id,
+            details={"cli_model_id": shared.model_id, "artifact_model_id": model_handle.model_id},
+        )
+    if shared.revision is not None and shared.revision != model_handle.revision:
+        raise TopologyMismatchError(
+            "CLI revision does not match artifact revision",
+            model_id=model_handle.model_id,
+            details={"cli_revision": shared.revision, "artifact_revision": model_handle.revision or "none"},
+        )
+    if shared.backend_name is not None and model_handle.backend_name not in (None, shared.backend_name):
+        raise BackendMismatchError(
+            "CLI backend does not match artifact backend",
+            model_id=model_handle.model_id,
+            backend_name=model_handle.backend_name,
+            details={"cli_backend_name": shared.backend_name},
+        )
+
+
+def _validate_topology_compatibility(
+    expected_layers: Sequence["LayerTopology"],
+    actual_layers: Sequence["LayerTopology"],
+    *,
+    model_id: str,
+    message: str,
+) -> None:
+    expected_signature = tuple(_topology_signature(layer) for layer in expected_layers)
+    actual_signature = tuple(_topology_signature(layer) for layer in actual_layers)
+    if expected_signature != actual_signature:
+        raise TopologyMismatchError(
+            message,
+            model_id=model_id,
+            details={
+                "expected_layers": str(expected_signature),
+                "actual_layers": str(actual_signature),
+            },
+        )
+
+
+def _validate_scan_and_bench_compatibility(
+    scan_result: "StaticScanResult",
+    bench_result: "BenchmarkResult",
+) -> None:
+    from moe_surgeon.prune.planner import validate_planner_inputs
+
+    scan_handle = scan_result.manifest.model_handle
+    bench_handle = bench_result.manifest.model_handle
+    if scan_handle is None or bench_handle is None:
+        raise TopologyMismatchError("scan and bench artifacts must include model_handle")
+    if scan_handle.model_fingerprint != bench_handle.model_fingerprint:
+        raise TopologyMismatchError(
+            "scan and bench artifacts target different model fingerprints",
+            model_id=scan_handle.model_id,
+            details={
+                "scan_model_fingerprint": scan_handle.model_fingerprint,
+                "bench_model_fingerprint": bench_handle.model_fingerprint,
+            },
+        )
+    _validate_topology_compatibility(
+        scan_result.layers,
+        bench_result.topology,
+        model_id=scan_handle.model_id,
+        message="scan and bench topology snapshots do not match",
+    )
+    validate_planner_inputs(
+        scan_result.layers,
+        expert_stats=scan_result.expert_stats,
+        activation_stats=bench_result.activation_stats,
+    )
+
+
+def _load_runtime_bundle(shared: CliContext) -> tuple["ModelBackend", "LoadedBackendBundle"]:
+    from moe_surgeon.models.backend import BackendSignature, resolve_backend
+    from moe_surgeon.models.checkpoints import open_local_safetensors_checkpoint
+    from moe_surgeon.models.gemma4 import Gemma4Backend
+
+    seed = 0 if shared.seed is None else shared.seed
+    if shared.source_path is not None:
+        checkpoint = open_local_safetensors_checkpoint(shared.source_path)
+        signature = checkpoint.to_backend_signature()
+        backend = resolve_backend(signature)
+        if shared.backend_name is not None and getattr(backend, "name", None) != shared.backend_name:
+            raise BackendMismatchError(
+                "CLI backend override does not match resolved checkpoint backend",
+                model_id=checkpoint.model_id,
+                backend_name=getattr(backend, "name", None),
+                details={"cli_backend_name": shared.backend_name},
+            )
+        loaded_bundle = backend.load(signature, dtype=shared.dtype, seed=seed)
+        return backend, loaded_bundle
+
+    if shared.model_id is None:
+        raise TopologyMismatchError("runtime workflow requires --model-id or --source-path")
+
+    if shared.backend_name not in (None, "gemma4"):
+        raise BackendMismatchError(
+            "unsupported explicit backend override",
+            model_id=shared.model_id,
+            backend_name=shared.backend_name,
+        )
+    backend = Gemma4Backend()
+    signature = BackendSignature.from_mapping(
+        {
+            "_name_or_path": shared.model_id,
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "model_type": "gemma4",
+            **({} if shared.revision is None else {"revision": shared.revision}),
+        },
+        model_id=shared.model_id,
+        source_path=shared.source_path,
+    )
+    loaded_bundle = backend.load(signature, dtype=shared.dtype, seed=seed)
+    return backend, loaded_bundle
+
+
 def _run_scan(request: ScanCommandRequest) -> int:
+    from moe_surgeon.analysis.scan import (
+        load_local_scan_bundle,
+        scan_model,
+        write_scan_artifact,
+    )
+
+    source_path = _ensure_local_checkpoint_source(request.shared, command="scan")
+    output_path = request.output_path or _default_scan_output_path(request.shared)
+    manifest_path = _run_manifest_sidecar_path(output_path, command="scan")
+    bundle, backend = load_local_scan_bundle(source_path)
+    _validate_context_model_handle(request.shared, bundle.model_handle)
+    result = scan_model(bundle, backend=backend)
+    artifact_manifest = replace(
+        result.manifest,
+        output_paths={"scan_artifact": str(output_path)},
+        metadata={
+            **dict(result.manifest.metadata),
+            "run_manifest_path": str(manifest_path),
+        },
+    )
+    result = replace(result, manifest=artifact_manifest)
+    written_artifact = write_scan_artifact(output_path, result)
+    written_manifest = _write_manifest_sidecar(manifest_path, artifact_manifest)
     click.echo("command=scan")
-    click.echo(f"model_id={request.shared.model_id or '-'}")
-    click.echo(f"source_path={_path_text(request.shared.source_path)}")
-    click.echo(f"output_path={_path_text(request.output_path)}")
+    click.echo(f"source_path={source_path}")
+    click.echo(f"output_path={written_artifact}")
+    click.echo(f"run_manifest={written_manifest}")
     return 0
 
 
 def _run_bench(request: BenchCommandRequest) -> int:
-    prompt_batches = 0
-    if request.prompts:
-        prompt_batches = (len(request.prompts) + request.batch_size - 1) // request.batch_size
+    import importlib
+
+    from moe_surgeon.analysis.scan import load_scan_artifact, validate_scan_artifact
+    from moe_surgeon.runtime.bench import validate_benchmark_artifact, write_benchmark_artifact
+    from moe_surgeon.runtime.profiler import (
+        RouterActivationProfiler,
+        benchmark,
+        iter_prompt_batches,
+    )
+
+    if request.scan_artifact is None:
+        raise TopologyMismatchError("bench requires --scan-artifact")
+    if not request.prompts:
+        raise TopologyMismatchError("bench requires at least one --prompt")
+
+    scan_result = validate_scan_artifact(load_scan_artifact(request.scan_artifact))
+    scan_handle = scan_result.manifest.model_handle
+    if scan_handle is None:
+        raise TopologyMismatchError("scan artifact must include model_handle")
+    _validate_context_model_handle(request.shared, scan_handle)
+
+    backend, bundle = _load_runtime_bundle(request.shared)
+    bundle_topology = tuple(backend.extract_topology(bundle))
+    _validate_topology_compatibility(
+        scan_result.layers,
+        bundle_topology,
+        model_id=bundle.model_handle.model_id,
+        message="scan artifact topology does not match runtime-loaded model topology",
+    )
+
+    tokenizer = bundle.tokenizer
+    if tokenizer is None:
+        raise TopologyMismatchError(
+            "runtime benchmark requires a tokenizer-enabled backend bundle",
+            model_id=bundle.model_handle.model_id,
+        )
+    tokenizer_callable = cast(Callable[..., object], tokenizer)
+    model = bundle.model
+    eval_fn = getattr(model, "eval", None)
+    if callable(eval_fn):
+        eval_fn()
+
+    torch = importlib.import_module("torch")
+    with RouterActivationProfiler(
+        backend=backend,
+        bundle=bundle,
+        topology=bundle_topology,
+        include_router_scores=request.capture_router_scores,
+    ) as profiler:
+        with torch.no_grad():
+            for batch in iter_prompt_batches(
+                tokenizer=tokenizer_callable,
+                prompts=request.prompts,
+                batch_size=request.batch_size,
+            ):
+                inputs = dict(batch.encoded_inputs)
+                inputs.setdefault("use_cache", False)
+                model_call = getattr(model, "__call__", None)
+                if not callable(model_call):
+                    raise TopologyMismatchError(
+                        "runtime benchmark requires a callable model object",
+                        model_id=bundle.model_handle.model_id,
+                    )
+                model_call(**inputs)
+                profiler.accumulate(attention_mask=batch.attention_mask)
+        result = validate_benchmark_artifact(
+            benchmark(
+                profiler=profiler,
+                prompts=request.prompts,
+                profiler_config={
+                    "batch_size": request.batch_size,
+                    "capture_router_scores": request.capture_router_scores,
+                },
+                parent_artifacts=(str(request.scan_artifact),),
+                output_paths={
+                    "benchmark_artifact": str(request.output_path or _default_bench_output_path(request.shared))
+                },
+                seed=request.shared.seed,
+            )
+        )
+
+    output_path = request.output_path or _default_bench_output_path(request.shared)
+    manifest_path = _run_manifest_sidecar_path(output_path, command="bench")
+    artifact_manifest = replace(
+        result.manifest,
+        output_paths={"benchmark_artifact": str(output_path)},
+        parent_artifacts=(str(request.scan_artifact),),
+        metadata={
+            **dict(result.manifest.metadata),
+            "run_manifest_path": str(manifest_path),
+        },
+    )
+    result = replace(result, manifest=artifact_manifest)
+    written_artifact = write_benchmark_artifact(output_path, result)
+    written_manifest = _write_manifest_sidecar(manifest_path, artifact_manifest)
+
+    prompt_batches = (len(request.prompts) + request.batch_size - 1) // request.batch_size
     click.echo("command=bench")
+    click.echo(f"scan_artifact={request.scan_artifact}")
     click.echo(f"prompt_inputs={len(request.prompts)}")
     click.echo(f"prompt_batches={prompt_batches}")
     click.echo(f"batch_size={request.batch_size}")
-    click.echo(f"seed={request.shared.seed if request.shared.seed is not None else '-'}")
-    click.echo(
-        "capture_router_scores="
-        f"{'true' if request.capture_router_scores else 'false'}"
-    )
-    click.echo(f"output_path={_path_text(request.output_path)}")
+    click.echo(f"output_path={written_artifact}")
+    click.echo(f"run_manifest={written_manifest}")
     return 0
 
 
 def _run_prune(request: PruneCommandRequest) -> int:
+    from moe_surgeon.analysis.scan import load_scan_artifact, validate_scan_artifact
+    from moe_surgeon.prune.apply import apply_prune_plan
+    from moe_surgeon.prune.planner import (
+        PlannerConstraints,
+        build_prune_plan,
+        write_prune_plan,
+    )
+    from moe_surgeon.runtime.bench import load_benchmark_artifact, validate_benchmark_artifact
+    from moe_surgeon.schemas import RunArtifactManifest
+
+    source_path = _ensure_local_checkpoint_source(request.shared, command="prune")
+    if request.scan_artifact is None or request.bench_artifact is None:
+        raise TopologyMismatchError("prune requires both --scan-artifact and --bench-artifact")
+
+    scan_result = validate_scan_artifact(load_scan_artifact(request.scan_artifact))
+    bench_result = validate_benchmark_artifact(load_benchmark_artifact(request.bench_artifact))
+    _validate_scan_and_bench_compatibility(scan_result, bench_result)
+
+    scan_handle = scan_result.manifest.model_handle
+    if scan_handle is None:
+        raise TopologyMismatchError("scan artifact must include model_handle")
+    _validate_context_model_handle(request.shared, scan_handle)
+
+    output_dir = request.output_dir or _default_prune_output_dir(request.shared)
+    output_root = output_dir.expanduser().resolve()
+    if output_root.exists():
+        if not output_root.is_dir():
+            raise TopologyMismatchError(
+                "prune output_dir must be a directory path",
+                model_id=scan_handle.model_id,
+                details={"output_dir": str(output_root)},
+            )
+        if any(output_root.iterdir()):
+            raise TopologyMismatchError(
+                "prune output_dir must be empty",
+                model_id=scan_handle.model_id,
+                details={"output_dir": str(output_root)},
+            )
+    else:
+        output_root.mkdir(parents=True, exist_ok=False)
+
+    constraints = PlannerConstraints(
+        global_target_experts=request.target_experts,
+        min_experts_per_layer=request.min_experts_per_layer,
+    )
+    plan = build_prune_plan(
+        scan_result.layers,
+        strategy=request.strategy,
+        expert_stats=scan_result.expert_stats,
+        activation_stats=bench_result.activation_stats,
+        constraints=constraints,
+        model_handle=scan_handle,
+        source_run_id=bench_result.manifest.run_id,
+    )
+    plan_path = write_prune_plan(output_root / "prune-plan.json", plan)
+    apply_artifact_dir = output_root / "applied-checkpoint"
+    apply_result = apply_prune_plan(source_path, plan=plan, dry_run=False, output_dir=apply_artifact_dir)
+
+    prune_manifest = RunArtifactManifest(
+        run_id=f"prune-{plan.plan_id}",
+        command="prune",
+        model_handle=scan_handle,
+        top_k=scan_result.manifest.top_k,
+        seed=request.shared.seed or 0,
+        input_checksums={
+            "scan_manifest_digest": scan_result.manifest.canonical_digest,
+            "bench_manifest_digest": bench_result.manifest.canonical_digest,
+            "plan_manifest_id": plan.versioned_manifest_id,
+        },
+        output_paths={
+            "prune_plan": str(plan_path),
+            "apply_artifact_dir": str(apply_artifact_dir),
+        },
+        parent_artifacts=(str(request.scan_artifact), str(request.bench_artifact)),
+        run_plan=plan,
+        metadata={
+            "apply_id": apply_result.apply_id,
+            "apply_artifact_dir": str(apply_artifact_dir),
+            "export_manifest_path": str(apply_artifact_dir / "run-manifest.json"),
+        },
+    )
+    prune_manifest_path = _write_manifest_sidecar(output_root / "prune-run-manifest.json", prune_manifest)
+
     click.echo("command=prune")
-    click.echo(f"scan_artifact={_path_text(request.scan_artifact)}")
-    click.echo(f"bench_artifact={_path_text(request.bench_artifact)}")
+    click.echo(f"scan_artifact={request.scan_artifact}")
+    click.echo(f"bench_artifact={request.bench_artifact}")
     click.echo(f"strategy={request.strategy}")
-    click.echo(f"output_dir={_path_text(request.output_dir)}")
+    click.echo(f"plan_path={plan_path}")
+    click.echo(f"apply_artifact_dir={apply_artifact_dir}")
+    click.echo(f"run_manifest={prune_manifest_path}")
     return 0
 
 
 def _run_export(request: ExportCommandRequest) -> int:
+    from moe_surgeon.export.runner import run_export_from_apply_artifact
+    from moe_surgeon.prune.apply import load_apply_result, validate_apply_result
+
+    if request.apply_artifact_dir is None:
+        raise TopologyMismatchError("export requires --apply-artifact-dir")
+    apply_result = validate_apply_result(load_apply_result(request.apply_artifact_dir), require_materialized=True)
+    _validate_context_model_handle(request.shared, apply_result.model_handle)
+    output_dir = request.output_dir or _default_export_output_dir(request.shared)
+    export_result = run_export_from_apply_artifact(request.apply_artifact_dir, output_dir=output_dir)
     click.echo("command=export")
-    click.echo(f"apply_artifact_dir={_path_text(request.apply_artifact_dir)}")
-    click.echo(f"output_dir={_path_text(request.output_dir)}")
+    click.echo(f"apply_artifact_dir={request.apply_artifact_dir}")
+    click.echo(f"output_dir={output_dir}")
+    click.echo(f"export_id={export_result.export_id}")
+    click.echo(f"run_manifest={Path(output_dir) / 'run-manifest.json'}")
     return 0
 
 
@@ -256,11 +679,20 @@ def scan_command(
         seed=seed,
         artifact_root=artifact_root,
     )
-    _run_scan(ScanCommandRequest(shared=shared, output_path=output_path))
+    try:
+        _run_scan(ScanCommandRequest(shared=shared, output_path=output_path))
+    except ModelError as exc:
+        _raise_command_failure(exc)
 
 
 @cli.command("bench")
 @_shared_command_options
+@click.option(
+    "--scan-artifact",
+    type=click.Path(path_type=Path, dir_okay=False, exists=False, resolve_path=False),
+    default=None,
+    help="Static scan artifact consumed by bench preflight validation.",
+)
 @click.option(
     "--prompt",
     "prompts",
@@ -296,6 +728,7 @@ def bench_command(
     dtype: str | None,
     seed: int | None,
     artifact_root: Path | None,
+    scan_artifact: Path | None,
     prompts: tuple[str, ...],
     batch_size: int,
     capture_router_scores: bool,
@@ -313,15 +746,19 @@ def bench_command(
         seed=seed,
         artifact_root=artifact_root,
     )
-    _run_bench(
-        BenchCommandRequest(
-            shared=shared,
-            prompts=prompts,
-            batch_size=batch_size,
-            capture_router_scores=capture_router_scores,
-            output_path=output_path,
+    try:
+        _run_bench(
+            BenchCommandRequest(
+                shared=shared,
+                scan_artifact=scan_artifact,
+                prompts=prompts,
+                batch_size=batch_size,
+                capture_router_scores=capture_router_scores,
+                output_path=output_path,
+            )
         )
-    )
+    except ModelError as exc:
+        _raise_command_failure(exc)
 
 
 @cli.command("prune")
@@ -345,6 +782,18 @@ def bench_command(
     help="Deterministic prune strategy name.",
 )
 @click.option(
+    "--target-experts",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Optional global target number of surviving experts across all MoE layers.",
+)
+@click.option(
+    "--min-experts-per-layer",
+    type=click.IntRange(min=1),
+    default=1,
+    help="Minimum number of experts to preserve per MoE layer.",
+)
+@click.option(
     "--output-dir",
     type=click.Path(path_type=Path, file_okay=False, dir_okay=True, resolve_path=False),
     default=None,
@@ -363,6 +812,8 @@ def prune_command(
     scan_artifact: Path | None,
     bench_artifact: Path | None,
     strategy: str,
+    target_experts: int | None,
+    min_experts_per_layer: int,
     output_dir: Path | None,
 ) -> None:
     """Run prune planning and apply orchestration."""
@@ -377,15 +828,20 @@ def prune_command(
         seed=seed,
         artifact_root=artifact_root,
     )
-    _run_prune(
-        PruneCommandRequest(
-            shared=shared,
-            scan_artifact=scan_artifact,
-            bench_artifact=bench_artifact,
-            strategy=strategy.lower(),
-            output_dir=output_dir,
+    try:
+        _run_prune(
+            PruneCommandRequest(
+                shared=shared,
+                scan_artifact=scan_artifact,
+                bench_artifact=bench_artifact,
+                strategy=strategy.lower(),
+                target_experts=target_experts,
+                min_experts_per_layer=min_experts_per_layer,
+                output_dir=output_dir,
+            )
         )
-    )
+    except ModelError as exc:
+        _raise_command_failure(exc)
 
 
 @cli.command("export")
@@ -427,13 +883,16 @@ def export_command(
         seed=seed,
         artifact_root=artifact_root,
     )
-    _run_export(
-        ExportCommandRequest(
-            shared=shared,
-            apply_artifact_dir=apply_artifact_dir,
-            output_dir=output_dir,
+    try:
+        _run_export(
+            ExportCommandRequest(
+                shared=shared,
+                apply_artifact_dir=apply_artifact_dir,
+                output_dir=output_dir,
+            )
         )
-    )
+    except ModelError as exc:
+        _raise_command_failure(exc)
 
 
 def main(args: Sequence[str] | None = None, *, prog_name: str | None = None) -> int | None:

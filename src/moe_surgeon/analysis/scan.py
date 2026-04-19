@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+import json
 from math import fsum
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -21,8 +22,10 @@ from moe_surgeon.schemas import (
     ActivationStats,
     ExpertStats,
     LayerTopology,
+    ModelHandle,
     RouterState,
     RunArtifactManifest,
+    from_json,
     sort_activation_stats,
     to_dict,
     to_json,
@@ -374,6 +377,101 @@ def write_scan_artifact(path: str | Path, result: StaticScanResult, *, compact: 
     return target
 
 
+def load_scan_artifact(path: str | Path) -> StaticScanResult:
+    """Load a persisted static scan artifact from disk."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TopologyMismatchError("scan artifact payload must be a JSON object")
+    manifest = from_json(payload["manifest"])
+    if not isinstance(manifest, RunArtifactManifest):
+        raise TopologyMismatchError("scan artifact manifest must be RunArtifactManifest")
+    layers = tuple(
+        item for item in (from_json(layer_payload) for layer_payload in payload["layers"]) if isinstance(item, LayerTopology)
+    )
+    router_states = tuple(
+        item
+        for item in (from_json(state_payload) for state_payload in payload["router_states"])
+        if isinstance(item, RouterState)
+    )
+    expert_stats = tuple(
+        item
+        for item in (from_json(stat_payload) for stat_payload in payload["expert_stats"])
+        if isinstance(item, ExpertStats)
+    )
+    layer_summaries = tuple(
+        RouterMetricSummary(**summary_payload) for summary_payload in payload["layer_summaries"]
+    )
+    aggregate_summary = StaticScanAggregateSummary(**payload["aggregate_summary"])
+    result = StaticScanResult(
+        layers=layers,
+        router_states=router_states,
+        expert_stats=expert_stats,
+        layer_summaries=layer_summaries,
+        aggregate_summary=aggregate_summary,
+        manifest=manifest,
+    )
+    return validate_scan_artifact(result)
+
+
+def validate_scan_artifact(result: StaticScanResult) -> StaticScanResult:
+    """Validate a persisted static scan artifact before downstream chaining."""
+
+    if result.manifest.command != "scan":
+        raise TopologyMismatchError(
+            "scan artifact manifest command must be scan",
+            details={"command": result.manifest.command},
+        )
+    if result.manifest.model_handle is None:
+        raise TopologyMismatchError("scan artifact manifest must include model_handle")
+    build_layer_topology_index(result.layers)
+    if len(result.layers) != len(result.router_states):
+        raise TopologyMismatchError(
+            "scan artifact router state coverage does not match topology",
+            model_id=result.manifest.model_handle.model_id,
+            details={
+                "layer_count": len(result.layers),
+                "router_state_count": len(result.router_states),
+            },
+        )
+    for layer in result.layers:
+        layer_stats = [item for item in result.expert_stats if item.layer_index == layer.layer_index]
+        if len(layer_stats) != layer.expert_count:
+            raise TopologyMismatchError(
+                "scan artifact expert stats coverage does not match topology",
+                model_id=result.manifest.model_handle.model_id,
+                layer_index=layer.layer_index,
+                details={
+                    "expected_expert_count": layer.expert_count,
+                    "actual_expert_stats": len(layer_stats),
+                },
+            )
+    return result
+
+
+def load_local_scan_bundle(checkpoint_dir: str | Path) -> tuple[LoadedBackendBundle, ModelBackend]:
+    """Build a lightweight backend bundle for local static scan workflows."""
+
+    checkpoint = open_local_safetensors_checkpoint(checkpoint_dir)
+    backend = resolve_backend(checkpoint.to_backend_signature())
+    bundle = LoadedBackendBundle(
+        backend_name=getattr(backend, "name", "unknown"),
+        model_handle=ModelHandle(
+            model_id=checkpoint.model_id,
+            revision=checkpoint.revision,
+            backend_name=getattr(backend, "name", None),
+            source_path=str(checkpoint.checkpoint_dir),
+        ),
+        model=object(),
+        config=checkpoint.config,
+        metadata={
+            "state_keys": checkpoint.state_keys(),
+            "backend_version": getattr(backend, "backend_version", "unknown"),
+        },
+    )
+    return bundle, backend
+
+
 def scan_model(
     bundle: LoadedBackendBundle,
     *,
@@ -554,4 +652,5 @@ __all__ = [
     "write_scan_artifact",
     "build_layer_topology_index",
     "align_activation_stats",
+    "validate_scan_artifact",
 ]

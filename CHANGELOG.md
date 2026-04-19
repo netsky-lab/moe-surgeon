@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Wired the real CLI workflow chain in `src/moe_surgeon/cli/main.py` so
+  `scan`, `bench`, `prune`, and `export` now call the analysis/runtime/planner/
+  apply/export modules instead of placeholder echo handlers, enforce artifact
+  dependency edges, and write sidecar run manifests with explicit output paths.
+- Added artifact validation helpers in `src/moe_surgeon/analysis/scan.py`,
+  `src/moe_surgeon/runtime/bench.py`, `src/moe_surgeon/prune/planner.py`, and
+  `src/moe_surgeon/prune/apply.py`, and tightened
+  `src/moe_surgeon/export/runner.py` to require a materialized apply artifact
+  before export.
+- Fixed `load_local_scan_bundle()` to pass checkpoint `state_keys` instead of
+  checkpoint tensor metadata as a fake materialized `state_dict`, which
+  unblocked real local scan execution through the CLI.
+- Expanded `tests/test_cli.py` with offline workflow coverage for scan manifest
+  sidecars, bench artifact chaining through a fake runtime bundle, and
+  prune/export artifact handoff through a real tiny safetensors fixture.
 - Implemented the missing Click command graph in `src/moe_surgeon/cli/main.py`
   with a typed shared `CliContext`, shared root options, and registered
   `scan`, `bench`, `prune`, and `export` commands while keeping command

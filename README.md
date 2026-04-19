@@ -92,7 +92,11 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
   Gemma4 support as added on 2026-04-01, and the first PyPI release carrying
   that support is `transformers 5.5.0` from 2026-04-02.
 - Run help with `python -m moe_surgeon --help` or the installed `moe-surgeon --help` script.
-- The bootstrap CLI exposes placeholder `scan`, `bench`, `prune`, and `export` commands without importing model/runtime backends during help parsing.
+- Help parsing stays lightweight and does not import heavy model/runtime backends.
+- `scan` consumes a local safetensors checkpoint via `--source-path` and writes a canonical scan artifact plus a sidecar run manifest.
+- `bench` requires `--scan-artifact` and validates the runtime-loaded topology against the scan artifact before profiling prompts.
+- `prune` requires both `--scan-artifact` and `--bench-artifact`, writes `prune-plan.json`, and materializes an `applied-checkpoint/` tree that `export` can consume directly.
+- `export` consumes `--apply-artifact-dir` and writes a deterministic exported checkpoint tree with `run-manifest.json` and `SHA256SUMS`.
 
 ## Quality commands
 

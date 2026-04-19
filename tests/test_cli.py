@@ -11,8 +11,13 @@ import pytest
 from click.testing import CliRunner
 
 from moe_surgeon import PACKAGE_DESCRIPTION, PACKAGE_NAME, __version__
+from moe_surgeon.analysis.scan import load_scan_artifact
 from moe_surgeon.__main__ import main as module_main
 from moe_surgeon.cli.main import cli
+from moe_surgeon.models.backend import LoadedBackendBundle
+from moe_surgeon.schemas import ModelHandle
+from test_prune_apply import _write_checkpoint
+from test_runtime_profiler import FakeBackend, FakeRouterModule, FakeTokenizer, _router_state
 
 FORBIDDEN_RUNTIME_MODULES = ("torch", "transformers", "safetensors")
 
@@ -160,24 +165,41 @@ def test_module_main_is_importable() -> None:
 
 def test_shared_root_context_is_available_to_subcommands() -> None:
     runner = CliRunner()
-    result = runner.invoke(
-        cli,
-        [
-            "--model-id",
-            "google/gemma-4-26b-a4b",
-            "--source-path",
-            "fixtures/checkpoint",
-            "scan",
-            "--output",
-            "artifacts/scan.json",
-        ],
-    )
+    with runner.isolated_filesystem():
+        checkpoint_root = Path("checkpoint")
+        checkpoint_root.mkdir()
+        _write_checkpoint(checkpoint_root)
+        result = runner.invoke(
+            cli,
+            [
+                "--model-id",
+                "google/gemma-4-27b",
+                "--source-path",
+                str(checkpoint_root),
+                "scan",
+                "--output",
+                "artifacts/scan.json",
+            ],
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "command=scan" in result.output
+        assert "source_path=checkpoint" in result.output
+        assert "output_path=artifacts/scan.json" in result.output
+
+
+def test_scan_command_writes_manifest_sidecar(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    output_path = tmp_path / "scan" / "scan.json"
+    result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(output_path)])
 
     assert result.exit_code == 0, result.output
-    assert "command=scan" in result.output
-    assert "model_id=google/gemma-4-26b-a4b" in result.output
-    assert "source_path=fixtures/checkpoint" in result.output
-    assert "output_path=artifacts/scan.json" in result.output
+    assert output_path.is_file()
+    assert output_path.with_name("scan.run-manifest.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -210,13 +232,80 @@ def test_cli_version_commands_are_lightweight(
     assert not forbidden, forbidden
 
 
-def test_bench_command_accepts_prompt_batching_options() -> None:
-    result = subprocess.run(
+def test_bench_command_accepts_prompt_batching_options(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(scan_path)])
+    assert scan_result.exit_code == 0, scan_result.output
+    scan_artifact = load_scan_artifact(scan_path)
+
+    module = FakeRouterModule(name="layer-0")
+    backend = FakeBackend(router_states={0: _router_state(0)}, modules={0: module})
+
+    class FakeModel:
+        def eval(self) -> "FakeModel":
+            return self
+
+        def __call__(self, **kwargs: object) -> object:
+            attention_mask = kwargs["attention_mask"]
+            assert isinstance(attention_mask, list)
+            top_k_indices = [
+                [[0, 1] for _ in prompt_mask]
+                for prompt_mask in attention_mask
+            ]
+            top_k_weights = [
+                [[0.6, 0.4] for _ in prompt_mask]
+                for prompt_mask in attention_mask
+            ]
+            router_scores = [
+                [[0.6, 0.4, 0.0, 0.0] for _ in prompt_mask]
+                for prompt_mask in attention_mask
+            ]
+            module.run(
+                {
+                    "top_k_indices": top_k_indices,
+                    "top_k_weights": top_k_weights,
+                    "router_scores": router_scores,
+                }
+            )
+            return object()
+
+    fake_bundle = LoadedBackendBundle(
+        backend_name="fake",
+        model_handle=ModelHandle(model_id="google/gemma-4-27b", backend_name="fake"),
+        model=FakeModel(),
+        config={},
+        tokenizer=FakeTokenizer(),
+    )
+    fake_topology = scan_artifact.layers
+
+    def _fake_load_runtime_bundle(shared: object) -> tuple[FakeBackend, LoadedBackendBundle]:
+        del shared
+        return backend, fake_bundle
+
+    monkeypatch.setattr("moe_surgeon.cli.main._load_runtime_bundle", _fake_load_runtime_bundle)
+    monkeypatch.setattr(
+        backend,
+        "extract_topology",
+        lambda bundle: fake_topology,
+        raising=False,
+    )
+
+    result = runner.invoke(
+        cli,
         [
-            sys.executable,
-            "-c",
-            "from moe_surgeon.cli.main import main; main()",
+            "--model-id",
+            "google/gemma-4-27b",
             "bench",
+            "--scan-artifact",
+            str(scan_path),
             "--prompt",
             "alpha",
             "--prompt",
@@ -226,15 +315,159 @@ def test_bench_command_accepts_prompt_batching_options() -> None:
             "--seed",
             "7",
             "--capture-router-scores",
+            "--output",
+            str(tmp_path / "bench.json"),
         ],
-        check=False,
-        capture_output=True,
-        text=True,
     )
 
-    assert result.returncode == 0
-    assert "prompt_inputs=2" in result.stdout
-    assert "prompt_batches=1" in result.stdout
-    assert "batch_size=2" in result.stdout
-    assert "seed=7" in result.stdout
-    assert "capture_router_scores=true" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert "prompt_inputs=2" in result.output
+    assert "prompt_batches=1" in result.output
+    assert "batch_size=2" in result.output
+    assert (tmp_path / "bench.json").is_file()
+
+
+def test_prune_and_export_commands_chain_artifacts(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_root = tmp_path / "checkpoint"
+    checkpoint_root.mkdir()
+    _write_checkpoint(checkpoint_root)
+
+    scan_path = tmp_path / "scan.json"
+    scan_result = runner.invoke(cli, ["--source-path", str(checkpoint_root), "scan", "--output", str(scan_path)])
+    assert scan_result.exit_code == 0, scan_result.output
+    scan_artifact = load_scan_artifact(scan_path)
+
+    bench_path = tmp_path / "bench.json"
+    bench_payload = {
+        "manifest": {
+            "__schema_type": "RunArtifactManifest",
+            "__schema_version": "1.0.0",
+            "run_id": "bench-test",
+            "command": "bench",
+            "model_handle": scan_artifact.manifest.model_handle.to_dict(),
+            "top_k": 2,
+            "prompt_count": 1,
+            "seed": 0,
+            "prompt_set_hash": None,
+            "started_at": "1970-01-01T00:00:00+00:00",
+            "finished_at": None,
+            "input_checksums": {},
+            "output_paths": {},
+            "parent_artifacts": [],
+            "run_plan": None,
+            "metadata": {},
+        },
+        "topology": [
+            layer.to_dict() for layer in scan_artifact.layers
+        ],
+        "activation_stats": [
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 0,
+                "token_count": 10,
+                "weighted_token_count": 8.0,
+                "mass_sum": 8.0,
+                "mean_weight": 0.8,
+                "entropy": 0.1,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 5.0,
+                "density": 0.5,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 1,
+                "token_count": 6,
+                "weighted_token_count": 5.0,
+                "mass_sum": 5.0,
+                "mean_weight": 0.83,
+                "entropy": 0.2,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 3.0,
+                "density": 0.3,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 2,
+                "token_count": 4,
+                "weighted_token_count": 3.0,
+                "mass_sum": 3.0,
+                "mean_weight": 0.75,
+                "entropy": 0.3,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 2.0,
+                "density": 0.2,
+                "metadata": {},
+            },
+            {
+                "__schema_type": "ActivationStats",
+                "__schema_version": "1.0.0",
+                "layer_index": 0,
+                "expert_index": 3,
+                "token_count": 2,
+                "weighted_token_count": 1.0,
+                "mass_sum": 1.0,
+                "mean_weight": 0.5,
+                "entropy": 0.4,
+                "n_tokens": 20,
+                "weighted_n_tokens": 20.0,
+                "timestamp_span": None,
+                "top1_mass": 1.0,
+                "density": 0.1,
+                "metadata": {},
+            },
+        ],
+        "profiler_config": {"batch_size": 1},
+        "input_payload_hash": None,
+    }
+    bench_path.write_text(json.dumps(bench_payload), encoding="utf-8")
+
+    prune_root = tmp_path / "prune"
+    prune_result = runner.invoke(
+        cli,
+        [
+            "--source-path",
+            str(checkpoint_root),
+            "prune",
+            "--scan-artifact",
+            str(scan_path),
+            "--bench-artifact",
+            str(bench_path),
+            "--output-dir",
+            str(prune_root),
+            "--target-experts",
+            "2",
+        ],
+    )
+    assert prune_result.exit_code == 0, prune_result.output
+    assert (prune_root / "prune-plan.json").is_file()
+    assert (prune_root / "prune-run-manifest.json").is_file()
+    assert (prune_root / "applied-checkpoint" / "apply-manifest.json").is_file()
+
+    export_root = tmp_path / "export"
+    export_result = runner.invoke(
+        cli,
+        [
+            "export",
+            "--apply-artifact-dir",
+            str(prune_root / "applied-checkpoint"),
+            "--output-dir",
+            str(export_root),
+        ],
+    )
+    assert export_result.exit_code == 0, export_result.output
+    assert (export_root / "run-manifest.json").is_file()

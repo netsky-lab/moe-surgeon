@@ -8,7 +8,7 @@ The module is intentionally free from runtime heavy dependencies such as
 
 from __future__ import annotations
 
-from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass
+from dataclasses import MISSING, asdict, dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timezone
 from hashlib import sha256
 from math import floor, isfinite
@@ -921,6 +921,17 @@ class RunArtifactManifest(_SchemaBase):
         """Return a timestamp-free digest for reproducible manifests."""
 
         return sha256(to_json(self.canonical_digest_payload()).encode("utf-8")).hexdigest()
+
+    def finalized(self) -> "RunArtifactManifest":
+        """Return a copy carrying its canonical manifest digest in metadata."""
+
+        return replace(
+            self,
+            metadata={
+                **dict(self.metadata),
+                "canonical_manifest_digest": self.canonical_digest,
+            },
+        )
 
 
 def _canonicalize_manifest_model_handle_payload(payload: Mapping[str, Any]) -> Dict[str, Any]:
