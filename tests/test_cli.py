@@ -20,6 +20,21 @@ from test_prune_apply import _write_checkpoint
 from test_runtime_profiler import FakeBackend, FakeRouterModule, FakeTokenizer, _router_state
 
 FORBIDDEN_RUNTIME_MODULES = ("torch", "transformers", "safetensors")
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+_SRC_ROOT = _REPO_ROOT / "src"
+
+
+def _repo_python_env(*, extra_pythonpath: Path | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    python_path_entries: list[str] = []
+    if extra_pythonpath is not None:
+        python_path_entries.append(str(extra_pythonpath))
+    python_path_entries.append(str(_SRC_ROOT))
+    existing_python_path = env.get("PYTHONPATH")
+    if existing_python_path:
+        python_path_entries.append(existing_python_path)
+    env["PYTHONPATH"] = os.pathsep.join(python_path_entries)
+    return env
 
 
 def _run_cli_with_import_probe(tmp_path: Path, command: list[str]) -> tuple[subprocess.CompletedProcess[str], set[str]]:
@@ -51,11 +66,7 @@ atexit.register(_dump_imports)
         encoding="utf-8",
     )
 
-    env = os.environ.copy()
-    python_path = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        f"{probe_path}{os.pathsep}{python_path}" if python_path else str(probe_path)
-    )
+    env = _repo_python_env(extra_pythonpath=probe_path)
     env["MOE_SURGEON_IMPORT_PROBE_OUTPUT"] = str(output_path)
     result = subprocess.run(
         command,
@@ -80,6 +91,7 @@ def test_main_wrapper_runs_click_group_help() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_repo_python_env(),
     )
 
     assert result.returncode == 0
@@ -96,6 +108,7 @@ def test_module_help_lists_placeholder_subcommands() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_repo_python_env(),
     )
 
     assert result.returncode == 0
@@ -107,16 +120,38 @@ def test_module_help_lists_placeholder_subcommands() -> None:
 
 
 def test_root_help_lists_shared_options() -> None:
-    result = CliRunner().invoke(cli, ["--help"])
+    result = subprocess.run(
+        [sys.executable, "-m", "moe_surgeon", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_repo_python_env(),
+    )
 
-    assert result.exit_code == 0, result.output
-    assert "--model-id" in result.output
-    assert "--source-path DIRECTORY" in result.output
-    assert "Local checkpoint directory containing config.json" in result.output
-    assert "and safetensors weights." in result.output
-    assert "--backend" in result.output
-    assert "--seed" in result.output
-    assert "--artifact-root" in result.output
+    assert result.returncode == 0, result.stderr
+    assert "--model-id" in result.stdout
+    assert "--source-path DIRECTORY" in result.stdout
+    assert "Local checkpoint directory containing config.json" in result.stdout
+    assert "and safetensors weights." in result.stdout
+    assert "--backend" in result.stdout
+    assert "--seed" in result.stdout
+    assert "--artifact-root" in result.stdout
+
+
+def test_scan_help_lists_directory_only_source_path_contract() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "moe_surgeon", "scan", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=_repo_python_env(),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Usage: python -m moe_surgeon scan" in result.stdout
+    assert "--source-path DIRECTORY" in result.stdout
+    assert "Local checkpoint directory containing config.json" in result.stdout
+    assert "and safetensors weights." in result.stdout
 
 
 def test_module_main_wrapper_runs_click_group_help() -> None:
@@ -125,6 +160,7 @@ def test_module_main_wrapper_runs_click_group_help() -> None:
         check=False,
         capture_output=True,
         text=True,
+        env=_repo_python_env(),
     )
 
     assert result.returncode == 0
@@ -151,6 +187,7 @@ assert not forbidden, forbidden
         check=False,
         capture_output=True,
         text=True,
+        env=_repo_python_env(),
     )
 
     assert result.returncode == 0, result.stderr or result.stdout

@@ -399,7 +399,7 @@
 
 ## 2026-04-19
 - Aligned the `--source-path` CLI contract in `src/moe_surgeon/cli/main.py` with the checkpoint loader by making the option directory-only and updating command diagnostics/help text to say "checkpoint directory" explicitly.
-- Added a CLI regression in `tests/test_cli.py` covering direct file rejection for `--source-path` plus a help-text assertion so the user-facing contract matches the actual loader requirements.
+- Added repo-local CLI regressions in `tests/test_cli.py` covering direct file rejection for `--source-path` plus `python -m moe_surgeon --help` and `python -m moe_surgeon scan --help`, with subprocesses forced to resolve this checkout's `src/` tree so the tested help contract matches the actual loader requirements.
 - Updated `README.md` so scan documentation now states that `--source-path` must point to a checkpoint directory containing `config.json` and safetensors weights.
 
 ## 2026-04-18
