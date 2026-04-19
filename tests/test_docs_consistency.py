@@ -6,6 +6,7 @@ import re
 import subprocess
 
 from moe_surgeon import PACKAGE_LAYOUT
+import moe_surgeon.models as models_package
 from moe_surgeon.models import PACKAGE_DESCRIPTION as MODELS_PACKAGE_DESCRIPTION
 
 
@@ -238,6 +239,7 @@ def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role()
     assert PACKAGE_LAYOUT["models"] == MODELS_PACKAGE_DESCRIPTION
     assert _readme_claims().package_descriptions["models/"] == expected_models_description
     assert MODELS_PACKAGE_DESCRIPTION == expected_models_description
+    assert models_package.__doc__ == f"{MODELS_PACKAGE_DESCRIPTION}."
     assert "src/moe_surgeon/models/checkpoints.py" in MODELS_PACKAGE_DESCRIPTION
     assert "offline safetensors checkpoint reader" in MODELS_PACKAGE_DESCRIPTION
     assert "src/moe_surgeon/models/checkpoints.py" in claims.text

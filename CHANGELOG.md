@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Aligned `src/moe_surgeon/models/__init__.py`'s package docstring with the
+  enforced models package description so it now names the safetensors
+  checkpoint-reader role and tracked `src/moe_surgeon/models/checkpoints.py`
+  path.
+- Extended `tests/test_docs_consistency.py` to lock that module docstring to
+  `moe_surgeon.models.PACKAGE_DESCRIPTION`, preventing future drift between the
+  package header and the documented models/checkpoint-reader contract.
 - Tightened the `ARCHITECTURE.md` checkpoint-reader claim so it now names the
   exact `src/moe_surgeon/models/checkpoints.py` path and the lightweight role
   wording checked by `tests/test_docs_consistency.py`, including offline
