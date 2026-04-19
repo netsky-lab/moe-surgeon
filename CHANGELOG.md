@@ -397,6 +397,11 @@
 - Added `ArtifactValidationError` in `src/moe_surgeon/models/errors.py` plus a shared `resolve_deterministic_seed()` helper in `src/moe_surgeon/schemas.py` so command handlers can reject conflicting workflow seeds and preserve reproducible run-manifest metadata.
 - Expanded `tests/test_cli.py` and `tests/test_schemas.py` with regressions covering pre-existing output-path rejection, seed-conflict failures, backend mismatch diagnostics, and deterministic seed helper behavior.
 
+## 2026-04-19
+- Aligned the `--source-path` CLI contract in `src/moe_surgeon/cli/main.py` with the checkpoint loader by making the option directory-only and updating command diagnostics/help text to say "checkpoint directory" explicitly.
+- Added a CLI regression in `tests/test_cli.py` covering direct file rejection for `--source-path` plus a help-text assertion so the user-facing contract matches the actual loader requirements.
+- Updated `README.md` so scan documentation now states that `--source-path` must point to a checkpoint directory containing `config.json` and safetensors weights.
+
 ## 2026-04-18
 - Audited the git index for tracked symlink entries and confirmed there are no
   tracked symlinks outside the `.tmp/` quarantine.

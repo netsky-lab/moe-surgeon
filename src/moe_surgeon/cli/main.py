@@ -148,9 +148,9 @@ def _shared_root_options(command: F) -> F:
     )(command)
     command = _root_option(
         "--source-path",
-        type=click.Path(path_type=Path, file_okay=True, dir_okay=True, resolve_path=False),
+        type=click.Path(path_type=Path, file_okay=False, dir_okay=True, resolve_path=False),
         default=None,
-        help="Local checkpoint path.",
+        help="Local checkpoint directory containing config.json and safetensors weights.",
     )(command)
     command = _root_option(
         "--model-id",
@@ -225,7 +225,7 @@ def _run_manifest_sidecar_path(artifact_path: Path, *, command: str) -> Path:
 def _ensure_local_checkpoint_source(shared: CliContext, *, command: str) -> Path:
     if shared.source_path is None:
         raise TopologyMismatchError(
-            f"{command} requires --source-path pointing to a local safetensors checkpoint",
+            f"{command} requires --source-path pointing to a local safetensors checkpoint directory",
             details={"command": command},
         )
     return Path(shared.source_path)

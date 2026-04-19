@@ -93,7 +93,7 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
   that support is `transformers 5.5.0` from 2026-04-02.
 - Run help with `python -m moe_surgeon --help` or the installed `moe-surgeon --help` script.
 - Help parsing stays lightweight and does not import heavy model/runtime backends.
-- `scan` consumes a local safetensors checkpoint via `--source-path` and writes a canonical scan artifact plus a sidecar run manifest.
+- `scan` consumes a local safetensors checkpoint directory via `--source-path`; the directory must contain `config.json` plus either `model.safetensors` or `model.safetensors.index.json`.
 - `bench` requires `--scan-artifact` and validates the runtime-loaded topology against the scan artifact before profiling prompts.
 - `prune` requires both `--scan-artifact` and `--bench-artifact`, writes `prune-plan.json`, and materializes an `applied-checkpoint/` tree that `export` can consume directly.
 - `export` consumes `--apply-artifact-dir` and writes a deterministic exported checkpoint tree with `run-manifest.json` and `SHA256SUMS`.

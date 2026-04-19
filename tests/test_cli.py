@@ -107,19 +107,16 @@ def test_module_help_lists_placeholder_subcommands() -> None:
 
 
 def test_root_help_lists_shared_options() -> None:
-    result = subprocess.run(
-        [sys.executable, "-m", "moe_surgeon", "--help"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+    result = CliRunner().invoke(cli, ["--help"])
 
-    assert result.returncode == 0
-    assert "--model-id" in result.stdout
-    assert "--source-path" in result.stdout
-    assert "--backend" in result.stdout
-    assert "--seed" in result.stdout
-    assert "--artifact-root" in result.stdout
+    assert result.exit_code == 0, result.output
+    assert "--model-id" in result.output
+    assert "--source-path DIRECTORY" in result.output
+    assert "Local checkpoint directory containing config.json" in result.output
+    assert "and safetensors weights." in result.output
+    assert "--backend" in result.output
+    assert "--seed" in result.output
+    assert "--artifact-root" in result.output
 
 
 def test_module_main_wrapper_runs_click_group_help() -> None:
@@ -216,6 +213,22 @@ def test_scan_command_rejects_existing_output_path(tmp_path: Path) -> None:
     assert result.exit_code == 24
     assert "error[24:artifact_validation]" in result.output
     assert "scan output_path must not already exist" in result.output
+
+
+def test_scan_command_rejects_file_source_path_at_cli_parse_time(tmp_path: Path) -> None:
+    runner = CliRunner()
+    checkpoint_file = tmp_path / "model.safetensors"
+    checkpoint_file.write_bytes(b"not-a-directory")
+
+    result = runner.invoke(
+        cli,
+        ["--source-path", str(checkpoint_file), "scan", "--output", str(tmp_path / "scan.json")],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid value for '--source-path'" in result.output
+    assert "Directory" in result.output
+    assert str(checkpoint_file) in result.output
 
 
 @pytest.mark.parametrize(
