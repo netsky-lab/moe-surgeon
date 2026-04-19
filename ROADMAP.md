@@ -94,3 +94,26 @@ Acceptance criteria: validation-error branches are tested for each domain error;
   `tests/test_repo_metrics.py` are quality-gate/test-environment hardening and
   should not be used as completion evidence for the checkpoint-reader or
   targeted static-scan backlog items.
+- P11 hardening now depends on the tracked `tests/fixtures/tiny_gemma_like.py`
+  scaffold plus offline CLI/export manifest regressions so scan, planner, and
+  export contracts can be exercised without live model downloads.
+
+## Execution notes and limitations
+
+- Deterministic execution is a delivery constraint, not a best-effort goal:
+  fixed seeds, canonical JSON, stable ranking ties, and reproducible fixtures
+  must remain intact when new backends or strategies are added.
+- No checkpoint mutation is permitted during apply/export execution notes,
+  including temporary write-back shortcuts in tooling or tests.
+- Execution order is part of the contract: `scan` establishes the topology
+  snapshot, `bench` validates against it, `prune` records the canonical plan,
+  and apply/export only consume derived artifacts from those prior stages.
+- Safe fallback means explicit refusal on malformed manifests, backend
+  mismatches, unsupported topologies, or tensor shape violations; roadmap
+  completion does not include best-effort partial outputs.
+- Known limitation: offline tests cover contract and manifest correctness, but
+  they do not certify real-model throughput or routing quality; those remain in
+  explicit integration coverage.
+- Known limitation: current implementation and docs are intentionally optimized
+  around Gemma 4 26B-A4B semantics, so additional MoE families require backend
+  and validation extensions rather than inferred compatibility.

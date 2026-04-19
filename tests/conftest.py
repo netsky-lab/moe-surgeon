@@ -4,6 +4,8 @@ import importlib
 from pathlib import Path
 import sys
 
+import pytest
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SRC_ROOT = _REPO_ROOT / "src"
@@ -19,3 +21,42 @@ for module_name in tuple(sys.modules):
         del sys.modules[module_name]
 
 importlib.invalidate_caches()
+
+
+def _tiny_fixture_module():
+    return importlib.import_module("tests.fixtures.tiny_gemma_like")
+
+
+@pytest.fixture
+def tiny_fixture_state_dict() -> dict[str, object]:
+    return _tiny_fixture_module().tiny_state_dict()
+
+
+@pytest.fixture
+def tiny_fixture_topology():
+    return _tiny_fixture_module().tiny_topology()
+
+
+@pytest.fixture
+def tiny_fixture_router_states():
+    return _tiny_fixture_module().tiny_router_states()
+
+
+@pytest.fixture
+def tiny_fixture_bundle(tiny_fixture_state_dict: dict[str, object]):
+    return _tiny_fixture_module().tiny_bundle(state_dict=tiny_fixture_state_dict)
+
+
+@pytest.fixture
+def tiny_fixture_backend(tiny_fixture_state_dict: dict[str, object]):
+    return _tiny_fixture_module().TinyMockBackend(state_dict=tiny_fixture_state_dict)
+
+
+@pytest.fixture
+def tiny_fixture_expert_stats():
+    return _tiny_fixture_module().tiny_expert_stats()
+
+
+@pytest.fixture
+def tiny_fixture_activation_stats():
+    return _tiny_fixture_module().tiny_activation_stats()

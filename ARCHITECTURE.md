@@ -84,7 +84,8 @@ Mutations are performed in a later apply layer after planning.
 The apply layer consumes validated `PrunePlan` items plus checkpoint/topology
 context, computes deterministic expert remaps, rewrites only the targeted MoE
 tensors into a derived checkpoint tree, and revalidates the remapped tensor
-layouts before any output is materialized.
+layouts before any output is materialized. Shape mismatches, non-covering
+expert maps, or backend/topology drift are domain errors, not warnings.
 
 ## Data flow
 
@@ -102,9 +103,30 @@ layouts before any output is materialized.
    derived checkpoint under `applied-checkpoint/` so export can reuse apply
    results directly.
 4. apply: remap tensors and validate invariants.
+   Apply never edits source checkpoints or prior artifacts in place; it writes
+   a fresh derived checkpoint tree only after preflight shape/topology checks
+   and post-remap validation succeed.
 5. export: write deterministic outputs, compatibility metadata, and manifests.
+   Export treats the apply artifact as immutable input, preserves canonical file
+   ordering and manifest serialization, and fails fast if the derived checkpoint
+   bundle is incomplete or inconsistent.
 
 Analysis and runtime modules never mutate weights.
+
+## Test architecture
+
+- `tests/fixtures/tiny_gemma_like.py` provides a deterministic tiny Gemma4-like
+  backend, tensor payloads, and scan/bench/planning fixtures for offline
+  contract coverage.
+- CLI flow and export-manifest tests use those stable contracts to verify
+  artifact chaining, seed propagation, and manifest linkage without depending
+  on live downloads.
+- Safe fallback behavior is architectural: unsupported topology, backend
+  mismatch, or shape violations must raise explicit domain errors instead of
+  producing partial artifacts.
+- Offline tests are the primary hardening layer for determinism and contract
+  safety; live runtime coverage is intentionally limited to explicit
+  integration runs in a known-compatible Transformers environment.
 
 ## Design decisions
 
