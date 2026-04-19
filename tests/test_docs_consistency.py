@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.parser import Parser
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import sys
 
 from moe_surgeon import PACKAGE_LAYOUT
 from moe_surgeon.models import PACKAGE_DESCRIPTION as MODELS_PACKAGE_DESCRIPTION
@@ -11,6 +14,7 @@ from moe_surgeon.models import PACKAGE_DESCRIPTION as MODELS_PACKAGE_DESCRIPTION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = Path("src/moe_surgeon")
+EGG_INFO_ROOT = REPO_ROOT / "src/moe_surgeon.egg-info"
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,12 @@ class ReadmeClaims:
 class ArchitectureClaims:
     text: str
     package_paths: dict[str, bool]
+
+
+@dataclass(frozen=True)
+class GeneratedEggInfo:
+    pkg_info: str
+    sources: str
 
 
 def _tracked_source_inventory() -> SourceInventory:
@@ -80,6 +90,55 @@ def _architecture_claims() -> ArchitectureClaims:
     text = (REPO_ROOT / "ARCHITECTURE.md").read_text(encoding="utf-8")
     package_paths = _parse_architecture_package_structure(text)
     return ArchitectureClaims(text=" ".join(text.split()), package_paths=package_paths)
+
+
+def _tracked_pkg_info_text() -> str:
+    return (EGG_INFO_ROOT / "PKG-INFO").read_text(encoding="utf-8")
+
+
+def _tracked_sources_text() -> str:
+    return (EGG_INFO_ROOT / "SOURCES.txt").read_text(encoding="utf-8")
+
+
+def _pkg_info_fields(text: str) -> dict[str, tuple[str, ...] | str]:
+    metadata = Parser().parsestr(text)
+    return {
+        "name": metadata["Name"],
+        "version": metadata["Version"],
+        "summary": metadata["Summary"],
+        "requires_python": metadata["Requires-Python"],
+        "description_content_type": metadata["Description-Content-Type"],
+        "payload": metadata.get_payload(),
+    }
+
+
+def _generated_egg_info(tmp_path: Path) -> GeneratedEggInfo:
+    temp_repo = tmp_path / "repo"
+    shutil.copytree(
+        REPO_ROOT,
+        temp_repo,
+        ignore=shutil.ignore_patterns(".git", ".tmp", "__pycache__", "*.pyc"),
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from setuptools import setup; setup()",
+            "egg_info",
+            "--egg-base",
+            "src",
+        ],
+        cwd=temp_repo,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    generated_root = temp_repo / "src/moe_surgeon.egg-info"
+    return GeneratedEggInfo(
+        pkg_info=(generated_root / "PKG-INFO").read_text(encoding="utf-8"),
+        sources=(generated_root / "SOURCES.txt").read_text(encoding="utf-8"),
+    )
 
 
 def _normalize_inline_code(text: str) -> str:
@@ -244,3 +303,16 @@ def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role()
     assert "offline-local `safetensors` checkpoint introspection" in claims.text
     assert "deterministic `state_keys` and targeted tensor reads" in claims.text
     assert "without importing `transformers` or loading a full model" in claims.text
+
+
+def test_tracked_pkg_info_readme_payload_matches_readme() -> None:
+    pkg_info = Parser().parsestr(_tracked_pkg_info_text())
+
+    assert pkg_info.get_payload() == (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def test_tracked_egg_info_matches_regenerated_metadata(tmp_path: Path) -> None:
+    generated = _generated_egg_info(tmp_path)
+
+    assert _pkg_info_fields(_tracked_pkg_info_text()) == _pkg_info_fields(generated.pkg_info)
+    assert _tracked_sources_text() == generated.sources

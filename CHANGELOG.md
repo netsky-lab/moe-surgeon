@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Added packaging-consistency regressions in `tests/test_docs_consistency.py`
+  that assert the tracked `src/moe_surgeon.egg-info/PKG-INFO` README payload
+  matches `README.md`, regenerate setuptools `egg_info` in a temp repo copy,
+  and lock the tracked `SOURCES.txt` manifest plus core `PKG-INFO` fields to
+  that generated metadata.
+- Refreshed the tracked `src/moe_surgeon.egg-info/PKG-INFO` and
+  `src/moe_surgeon.egg-info/SOURCES.txt` files so the checked-in metadata now
+  matches the current README-derived package text and includes the newer
+  tracked test modules picked up by setuptools.
 - Tightened the `ARCHITECTURE.md` checkpoint-reader claim so it now names the
   exact `src/moe_surgeon/models/checkpoints.py` path and the lightweight role
   wording checked by `tests/test_docs_consistency.py`, including offline
