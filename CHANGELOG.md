@@ -393,6 +393,12 @@
 - Normalized lazy `transformers` symbol-resolution failures in the Gemma4 backend so supported-floor capability checks raise the same actionable `UnsupportedModelError` instead of leaking raw import-time exceptions.
 
 ## 2026-04-19
+- Added targeted P11 regression coverage in `tests/test_schemas.py` and
+  `tests/test_prune_strategy.py` for deterministic `sort_plan_items()`
+  ordering plus prune-plan JSON stability when logically equivalent
+  constraint and plan-item mappings arrive in different orders.
+
+## 2026-04-19
 - Hardened CLI workflow preflight in `src/moe_surgeon/cli/main.py` with explicit artifact/output validation for scan, bench, prune, and export, deterministic seed resolution across chained artifacts, and clearer `error[code:domain]` command failures for artifact-preflight versus backend/topology issues.
 - Added `ArtifactValidationError` in `src/moe_surgeon/models/errors.py` plus a shared `resolve_deterministic_seed()` helper in `src/moe_surgeon/schemas.py` so command handlers can reject conflicting workflow seeds and preserve reproducible run-manifest metadata.
 - Expanded `tests/test_cli.py` and `tests/test_schemas.py` with regressions covering pre-existing output-path rejection, seed-conflict failures, backend mismatch diagnostics, and deterministic seed helper behavior.

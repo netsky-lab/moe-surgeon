@@ -90,3 +90,47 @@ def test_validate_planner_inputs_accepts_shared_fixture_coverage() -> None:
         expert_stats=tiny_expert_stats(),
         activation_stats=tiny_activation_stats(),
     )
+
+
+def test_planner_constraints_and_plan_output_are_stable_across_override_mapping_order() -> None:
+    topology = tiny_topology()
+    constraints_left = PlannerConstraints(
+        global_target_experts=4,
+        min_experts_per_layer=1,
+        layer_overrides={
+            1: LayerConstraintOverride(target_experts=1),
+            0: LayerConstraintOverride(max_experts=3),
+        },
+    )
+    constraints_right = PlannerConstraints(
+        global_target_experts=4,
+        min_experts_per_layer=1,
+        layer_overrides={
+            0: LayerConstraintOverride(max_experts=3),
+            1: LayerConstraintOverride(target_experts=1),
+        },
+    )
+
+    assert constraints_left.canonical_payload() == constraints_right.canonical_payload()
+
+    left = build_prune_plan(
+        topology,
+        strategy="combined",
+        expert_stats=tiny_expert_stats(),
+        activation_stats=tiny_activation_stats(),
+        constraints=constraints_left,
+        model_handle=tiny_bundle().model_handle,
+        source_run_id="bench-tiny",
+    )
+    right = build_prune_plan(
+        topology,
+        strategy="combined",
+        expert_stats=tiny_expert_stats(),
+        activation_stats=tiny_activation_stats(),
+        constraints=constraints_right,
+        model_handle=tiny_bundle().model_handle,
+        source_run_id="bench-tiny",
+    )
+
+    assert to_json(left) == to_json(right)
+    assert left.constraints == right.constraints
