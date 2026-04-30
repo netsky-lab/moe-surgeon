@@ -130,15 +130,15 @@ def test_root_help_lists_shared_options() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "--model-id" in result.stdout
-    assert "--source-path DIRECTORY" in result.stdout
-    assert "Local checkpoint directory containing config.json" in result.stdout
-    assert "and safetensors weights." in result.stdout
+    assert "--source-path PATH" in result.stdout
+    assert "Local checkpoint directory containing safetensors" in result.stdout
+    assert "weights or a .gguf file." in result.stdout
     assert "--backend" in result.stdout
     assert "--seed" in result.stdout
     assert "--artifact-root" in result.stdout
 
 
-def test_scan_help_lists_directory_only_source_path_contract() -> None:
+def test_scan_help_lists_source_path_contract() -> None:
     result = subprocess.run(
         [sys.executable, "-m", "moe_surgeon", "scan", "--help"],
         check=False,
@@ -149,9 +149,9 @@ def test_scan_help_lists_directory_only_source_path_contract() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "Usage: python -m moe_surgeon scan" in result.stdout
-    assert "--source-path DIRECTORY" in result.stdout
-    assert "Local checkpoint directory containing config.json" in result.stdout
-    assert "and safetensors weights." in result.stdout
+    assert "--source-path PATH" in result.stdout
+    assert "Local checkpoint directory containing safetensors" in result.stdout
+    assert "weights or a .gguf file." in result.stdout
 
 
 def test_module_main_wrapper_runs_click_group_help() -> None:
@@ -252,7 +252,7 @@ def test_scan_command_rejects_existing_output_path(tmp_path: Path) -> None:
     assert "scan output_path must not already exist" in result.output
 
 
-def test_scan_command_rejects_file_source_path_at_cli_parse_time(tmp_path: Path) -> None:
+def test_scan_command_rejects_non_gguf_file_source_path_with_domain_error(tmp_path: Path) -> None:
     runner = CliRunner()
     checkpoint_file = tmp_path / "model.safetensors"
     checkpoint_file.write_bytes(b"not-a-directory")
@@ -262,9 +262,9 @@ def test_scan_command_rejects_file_source_path_at_cli_parse_time(tmp_path: Path)
         ["--source-path", str(checkpoint_file), "scan", "--output", str(tmp_path / "scan.json")],
     )
 
-    assert result.exit_code == 2
-    assert "Invalid value for '--source-path'" in result.output
-    assert "Directory" in result.output
+    assert result.exit_code == 22
+    assert "error[22:topology_mismatch]" in result.output
+    assert "checkpoint path must be an existing directory" in result.output
     assert str(checkpoint_file) in result.output
 
 

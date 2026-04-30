@@ -17,6 +17,7 @@ from moe_surgeon.models.checkpoints import (
     LocalSafetensorsCheckpoint,
     open_local_safetensors_checkpoint,
 )
+from moe_surgeon.models.gguf import LocalGgufCheckpoint, open_local_gguf_checkpoint
 from moe_surgeon.models.errors import ArtifactValidationError, ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.schemas import (
     ActivationStats,
@@ -102,11 +103,13 @@ def _bundle_with_local_checkpoint_state(
     )
 
 
-def _resolve_local_checkpoint(bundle: LoadedBackendBundle) -> LocalSafetensorsCheckpoint | None:
+def _resolve_local_checkpoint(bundle: LoadedBackendBundle) -> LocalSafetensorsCheckpoint | LocalGgufCheckpoint | None:
     source_path = bundle.model_handle.source_path
     if source_path is None:
         return None
     root = Path(source_path).expanduser()
+    if root.is_file() and root.suffix.lower() == ".gguf":
+        return open_local_gguf_checkpoint(root)
     if not root.is_dir():
         return None
     return open_local_safetensors_checkpoint(root)
@@ -114,13 +117,23 @@ def _resolve_local_checkpoint(bundle: LoadedBackendBundle) -> LocalSafetensorsCh
 
 def _scan_state(
     bundle: LoadedBackendBundle,
-) -> tuple[LoadedBackendBundle, Mapping[str, object] | None, LocalSafetensorsCheckpoint | None]:
+) -> tuple[
+    LoadedBackendBundle,
+    Mapping[str, object] | None,
+    LocalSafetensorsCheckpoint | LocalGgufCheckpoint | None,
+]:
+    gguf_checkpoint = bundle.metadata.get("gguf_checkpoint")
+    if isinstance(gguf_checkpoint, LocalGgufCheckpoint):
+        return bundle, None, gguf_checkpoint
+
     metadata_state = bundle.metadata.get("state_dict")
     if isinstance(metadata_state, Mapping):
         return bundle, metadata_state, None
 
     checkpoint = _resolve_local_checkpoint(bundle)
     if checkpoint is not None:
+        if isinstance(checkpoint, LocalGgufCheckpoint):
+            return bundle, None, checkpoint
         prepared_bundle = _bundle_with_local_checkpoint_state(bundle, checkpoint)
         return prepared_bundle, None, checkpoint
 
@@ -211,7 +224,7 @@ def _metric_tensors_for_layer(
     bundle: LoadedBackendBundle,
     layer: LayerTopology,
     state_dict: Mapping[str, object] | None,
-    checkpoint: LocalSafetensorsCheckpoint | None,
+    checkpoint: LocalSafetensorsCheckpoint | LocalGgufCheckpoint | None,
 ) -> Mapping[str, object]:
     if checkpoint is None:
         if state_dict is None:
@@ -496,20 +509,51 @@ def validate_scan_artifact(result: StaticScanResult) -> StaticScanResult:
 def load_local_scan_bundle(checkpoint_dir: str | Path) -> tuple[LoadedBackendBundle, ModelBackend]:
     """Build a lightweight backend bundle for local static scan workflows."""
 
-    checkpoint = open_local_safetensors_checkpoint(checkpoint_dir)
-    backend = resolve_backend(checkpoint.to_backend_signature())
+    checkpoint_path = Path(checkpoint_dir).expanduser()
+    if checkpoint_path.is_file() and checkpoint_path.suffix.lower() == ".gguf":
+        gguf_checkpoint = open_local_gguf_checkpoint(checkpoint_path)
+        backend = resolve_backend(gguf_checkpoint.to_backend_signature())
+        bundle = LoadedBackendBundle(
+            backend_name=getattr(backend, "name", "unknown"),
+            model_handle=ModelHandle(
+                model_id=gguf_checkpoint.model_id,
+                revision=gguf_checkpoint.revision,
+                backend_name=getattr(backend, "name", None),
+                source_path=str(gguf_checkpoint.checkpoint_path),
+                framework_version="gguf",
+                metadata={
+                    "format": "gguf",
+                    "file_fingerprint": gguf_checkpoint.file_fingerprint,
+                    "tensor_count": len(gguf_checkpoint.tensors),
+                },
+            ),
+            model=object(),
+            config=gguf_checkpoint.fields,
+            metadata={
+                "gguf_checkpoint": gguf_checkpoint,
+                "state_keys": gguf_checkpoint.state_keys(),
+                "state_dict": {
+                    item.tensor_key: item for item in gguf_checkpoint.tensor_metadata()
+                },
+                "backend_version": getattr(backend, "backend_version", "unknown"),
+            },
+        )
+        return bundle, backend
+
+    safetensors_checkpoint = open_local_safetensors_checkpoint(checkpoint_path)
+    backend = resolve_backend(safetensors_checkpoint.to_backend_signature())
     bundle = LoadedBackendBundle(
         backend_name=getattr(backend, "name", "unknown"),
         model_handle=ModelHandle(
-            model_id=checkpoint.model_id,
-            revision=checkpoint.revision,
+            model_id=safetensors_checkpoint.model_id,
+            revision=safetensors_checkpoint.revision,
             backend_name=getattr(backend, "name", None),
-            source_path=str(checkpoint.checkpoint_dir),
+            source_path=str(safetensors_checkpoint.checkpoint_dir),
         ),
         model=object(),
-        config=checkpoint.config,
+        config=safetensors_checkpoint.config,
         metadata={
-            "state_keys": checkpoint.state_keys(),
+            "state_keys": safetensors_checkpoint.state_keys(),
             "backend_version": getattr(backend, "backend_version", "unknown"),
         },
     )

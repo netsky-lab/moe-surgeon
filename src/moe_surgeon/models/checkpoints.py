@@ -79,7 +79,7 @@ class LocalSafetensorsCheckpoint:
                 shard_filename,
                 tensor_key=requested_keys[0],
             )
-            with safe_open(  # type: ignore[no-untyped-call,attr-defined]
+            with safe_open(  # type: ignore[no-untyped-call]
                 str(shard_path), framework="pt", device="cpu"
             ) as handle:
                 for tensor_key in requested_keys:
@@ -291,7 +291,7 @@ def _build_single_file_weight_map(
     model_id: str,
 ) -> dict[str, str]:
     try:
-        with safe_open(  # type: ignore[no-untyped-call,attr-defined]
+        with safe_open(  # type: ignore[no-untyped-call]
             str(single_path), framework="pt", device="cpu"
         ) as handle:
             keys = tuple(sorted(str(key) for key in handle.keys()))
@@ -329,7 +329,7 @@ def _read_tensor_metadata(
             tensor_key=expected_keys[0],
         )
         try:
-            with safe_open(  # type: ignore[no-untyped-call,attr-defined]
+            with safe_open(  # type: ignore[no-untyped-call]
                 str(shard_path), framework="pt", device="cpu"
             ) as handle:
                 actual_keys = {str(key) for key in handle.keys()}

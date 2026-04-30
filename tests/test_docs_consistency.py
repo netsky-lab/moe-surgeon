@@ -246,6 +246,7 @@ def test_readme_source_file_claims_exist_in_tracked_layout() -> None:
 
     assert claims.source_files == (
         "src/moe_surgeon/models/checkpoints.py",
+        "src/moe_surgeon/models/gguf.py",
         "src/moe_surgeon/schemas.py",
     )
     assert {
@@ -290,7 +291,8 @@ def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role()
     claims = _architecture_claims()
     expected_models_description = (
         "backend adapters, the offline safetensors checkpoint reader in "
-        "src/moe_surgeon/models/checkpoints.py, and topology/contracts"
+        "src/moe_surgeon/models/checkpoints.py, the GGUF metadata reader in "
+        "src/moe_surgeon/models/gguf.py, and topology/contracts"
     )
 
     assert "moe_surgeon/models" in inventory.package_dirs
@@ -300,6 +302,7 @@ def test_package_descriptions_align_with_tracked_models_checkpoint_reader_role()
     assert MODELS_PACKAGE_DESCRIPTION == expected_models_description
     assert models_package.__doc__ == f"{MODELS_PACKAGE_DESCRIPTION}."
     assert "src/moe_surgeon/models/checkpoints.py" in MODELS_PACKAGE_DESCRIPTION
+    assert "src/moe_surgeon/models/gguf.py" in MODELS_PACKAGE_DESCRIPTION
     assert "offline safetensors checkpoint reader" in MODELS_PACKAGE_DESCRIPTION
     assert "src/moe_surgeon/models/checkpoints.py" in claims.text
     assert "offline-local `safetensors` checkpoint introspection" in claims.text

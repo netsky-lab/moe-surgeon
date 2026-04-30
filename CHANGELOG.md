@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added Gemma4 GGUF support with a metadata-first reader, `gemma4-gguf`
+  backend registration, static scan support for F32 router tensors, and a
+  `gguf-prune` CLI path that writes a derived pruned `.gguf` by slicing
+  router/expert tensors along the GGUF expert axis while preserving all other
+  tensor payloads.
 - Aligned `src/moe_surgeon/models/__init__.py`'s package docstring with the
   enforced models package description so it now names the safetensors
   checkpoint-reader role and tracked `src/moe_surgeon/models/checkpoints.py`

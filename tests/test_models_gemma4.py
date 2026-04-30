@@ -569,7 +569,7 @@ def test_default_registry_resolves_gemma4_backend_from_mapping_and_signature() -
 
     registry = build_backend_registry()
 
-    assert registry.names() == ("gemma4",)
+    assert registry.names() == ("gemma4-gguf", "gemma4")
     assert registry.resolve(mapping).name == "gemma4"
     assert resolve_backend(signature).name == "gemma4"
     assert resolve_backend(model_type_only).name == "gemma4"

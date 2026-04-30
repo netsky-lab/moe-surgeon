@@ -72,7 +72,8 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 
 - cli/: command graph and orchestration (scan, bench, prune, export)
 - models/: backend adapters, the offline safetensors checkpoint reader in
-  `src/moe_surgeon/models/checkpoints.py`, and topology/contracts
+  `src/moe_surgeon/models/checkpoints.py`, the GGUF metadata reader in
+  `src/moe_surgeon/models/gguf.py`, and topology/contracts
 - analysis/: static router analysis
 - runtime/: forward hook profiler
 - prune/: strategy and plan generation (selection only)
@@ -137,6 +138,11 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - `bench` requires `--scan-artifact` and validates the runtime-loaded topology against the scan artifact before profiling prompts.
 - `prune` requires both `--scan-artifact` and `--bench-artifact`, writes `prune-plan.json`, and materializes an `applied-checkpoint/` tree that `export` can consume directly.
 - `export` consumes `--apply-artifact-dir` and writes a deterministic exported checkpoint tree with `run-manifest.json` and `SHA256SUMS`.
+- `gguf-prune` consumes a GGUF `--source-path` plus a compatible GGUF scan
+  artifact and writes a derived `.gguf` with a uniform static expert budget.
+  This path is intentionally static-only: it ranks experts from scan metrics,
+  slices GGUF router/expert tensors along the expert axis, updates
+  `gemma4.expert_count`, and preserves the rest of the GGUF tensor payload.
 
 ## Quality commands
 

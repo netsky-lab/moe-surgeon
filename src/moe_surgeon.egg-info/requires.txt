@@ -4,6 +4,7 @@ huggingface_hub>=0.36
 torch>=2.1
 transformers>=5.5.0
 safetensors>=0.4
+gguf>=0.18
 click>=8.1
 
 [dev]

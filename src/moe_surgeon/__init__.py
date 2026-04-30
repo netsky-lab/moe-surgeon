@@ -6,7 +6,8 @@ PACKAGE_LAYOUT = {
     "cli": "command graph and orchestration",
     "models": (
         "backend adapters, the offline safetensors checkpoint reader in "
-        "src/moe_surgeon/models/checkpoints.py, and topology/contracts"
+        "src/moe_surgeon/models/checkpoints.py, the GGUF metadata reader in "
+        "src/moe_surgeon/models/gguf.py, and topology/contracts"
     ),
     "analysis": "static router analysis",
     "runtime": "forward hook profiler",

@@ -92,6 +92,38 @@ class ExportCommandRequest:
     output_dir: Path | None
 
 
+@dataclass(frozen=True)
+class GgufPruneCommandRequest:
+    """Parsed options for the ``gguf-prune`` command."""
+
+    shared: CliContext
+    scan_artifact: Path | None
+    target_experts: int
+    output_path: Path | None
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class GgufInspectCommandRequest:
+    """Parsed options for the ``gguf-inspect`` command."""
+
+    shared: CliContext
+    output_path: Path | None
+
+
+@dataclass(frozen=True)
+class ApiEvalCommandRequest:
+    """Parsed options for the ``api-eval`` command."""
+
+    endpoint_specs: tuple[str, ...]
+    prompt_file: Path | None
+    output_path: Path | None
+    max_tokens: int
+    temperature: float
+    mode: str
+    timeout_seconds: float
+
+
 def _path_text(path: Path | None) -> str:
     return "-" if path is None else str(path)
 
@@ -148,9 +180,9 @@ def _shared_root_options(command: F) -> F:
     )(command)
     command = _root_option(
         "--source-path",
-        type=click.Path(path_type=Path, file_okay=False, dir_okay=True, resolve_path=False),
+        type=click.Path(path_type=Path, file_okay=True, dir_okay=True, resolve_path=False),
         default=None,
-        help="Local checkpoint directory containing config.json and safetensors weights.",
+        help="Local checkpoint directory containing safetensors weights or a .gguf file.",
     )(command)
     command = _root_option(
         "--model-id",
@@ -796,6 +828,78 @@ def _run_export(request: ExportCommandRequest) -> int:
     return 0
 
 
+def _run_gguf_prune(request: GgufPruneCommandRequest) -> int:
+    from moe_surgeon.analysis.scan import load_scan_artifact, validate_scan_artifact
+    from moe_surgeon.prune.gguf import prune_gguf_static
+
+    source_path = _ensure_local_checkpoint_source(request.shared, command="gguf-prune")
+    if source_path.suffix.lower() != ".gguf":
+        raise TopologyMismatchError(
+            "gguf-prune requires --source-path pointing to a .gguf file",
+            details={"source_path": str(source_path)},
+        )
+    if request.scan_artifact is None:
+        raise TopologyMismatchError("gguf-prune requires --scan-artifact")
+    scan_result = validate_scan_artifact(load_scan_artifact(request.scan_artifact))
+    scan_handle = scan_result.manifest.model_handle
+    if scan_handle is None:
+        raise TopologyMismatchError("scan artifact must include model_handle")
+    if scan_handle.backend_name != "gemma4-gguf":
+        raise BackendMismatchError(
+            "gguf-prune requires a gemma4-gguf scan artifact",
+            model_id=scan_handle.model_id,
+            backend_name=scan_handle.backend_name,
+        )
+    _validate_context_model_handle(request.shared, scan_handle)
+    output_path = request.output_path
+    if output_path is None:
+        output_path = _default_artifact_root(request.shared) / "gguf-prune" / source_path.name
+    if request.dry_run and request.output_path is None:
+        output_path = None
+    result = prune_gguf_static(
+        source_path,
+        scan_result=scan_result,
+        target_experts=request.target_experts,
+        output_path=output_path,
+        dry_run=request.dry_run,
+    )
+    click.echo("command=gguf-prune")
+    click.echo(f"source_path={source_path}")
+    click.echo(f"scan_artifact={request.scan_artifact}")
+    click.echo(f"target_experts={request.target_experts}")
+    click.echo(f"dry_run={result.dry_run}")
+    click.echo(f"output_path={_path_text(Path(result.output_path) if result.output_path is not None else None)}")
+    if result.output_path is not None and not result.dry_run:
+        click.echo(f"manifest={result.output_path}.manifest.json")
+    click.echo(f"prune_id={result.prune_id}")
+    return 0
+
+
+def _run_gguf_inspect(request: GgufInspectCommandRequest) -> int:
+    from moe_surgeon.prune.gguf import inspect_gguf
+    from moe_surgeon.schemas import to_json
+
+    source_path = _ensure_local_checkpoint_source(request.shared, command="gguf-inspect")
+    if source_path.suffix.lower() != ".gguf":
+        raise TopologyMismatchError(
+            "gguf-inspect requires --source-path pointing to a .gguf file",
+            details={"source_path": str(source_path)},
+        )
+    result = inspect_gguf(source_path)
+    payload = to_json(result.to_payload())
+    if request.output_path is not None:
+        output_path = _prepare_output_file_path(
+            request.output_path,
+            command="gguf-inspect",
+            model_id=result.model_id,
+        )
+        output_path.write_text(payload, encoding="utf-8")
+        click.echo(f"output_path={output_path}")
+    else:
+        click.echo(payload)
+    return 0
+
+
 @click.group(name=PACKAGE_NAME, help=PACKAGE_DESCRIPTION)
 @click.version_option(version=__version__)
 @_shared_root_options
@@ -858,6 +962,102 @@ def scan_command(
     )
     try:
         _run_scan(ScanCommandRequest(shared=shared, output_path=output_path))
+    except ModelError as exc:
+        _raise_command_failure(exc)
+
+
+def _run_api_eval(request: ApiEvalCommandRequest) -> int:
+    from moe_surgeon.runtime.api_eval import (
+        load_api_eval_prompts,
+        parse_api_eval_endpoint,
+        run_api_eval,
+        write_api_eval_result,
+    )
+
+    if not request.endpoint_specs:
+        raise ArtifactValidationError("api-eval requires at least one --endpoint")
+    if request.prompt_file is None:
+        raise ArtifactValidationError("api-eval requires --prompt-file")
+    if request.output_path is None:
+        raise ArtifactValidationError("api-eval requires --output")
+    endpoints = tuple(parse_api_eval_endpoint(value) for value in request.endpoint_specs)
+    prompts = load_api_eval_prompts(request.prompt_file)
+    result = run_api_eval(
+        endpoints=endpoints,
+        prompts=prompts,
+        max_tokens=request.max_tokens,
+        temperature=request.temperature,
+        mode=request.mode,
+        timeout_seconds=request.timeout_seconds,
+    )
+    output_path = write_api_eval_result(request.output_path, result)
+    ok_count = sum(1 for record in result.records if record.status == "ok")
+    error_count = len(result.records) - ok_count
+    summary = result.to_payload()["summary"]
+    click.echo("command=api-eval")
+    click.echo(f"prompt_count={len(prompts)}")
+    click.echo(f"endpoint_count={len(endpoints)}")
+    click.echo(f"record_count={len(result.records)}")
+    click.echo(f"ok_count={ok_count}")
+    click.echo(f"error_count={error_count}")
+    click.echo(f"summary={summary}")
+    click.echo(f"output_path={output_path}")
+    return 0
+
+
+@cli.command("api-eval")
+@click.option(
+    "--endpoint",
+    "endpoint_specs",
+    type=str,
+    multiple=True,
+    help="Endpoint spec in NAME=MODEL@URL format, e.g. p64=pruned@http://127.0.0.1:8090.",
+)
+@click.option(
+    "--prompt-file",
+    type=click.Path(path_type=Path, dir_okay=False, exists=False, resolve_path=False),
+    default=None,
+    help="JSONL or plain text prompt file.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False, resolve_path=False),
+    default=None,
+    help="Output path for canonical API eval JSON.",
+)
+@click.option("--max-tokens", type=click.IntRange(min=1), default=64, help="Completion token cap.")
+@click.option("--temperature", type=float, default=0.0, help="Sampling temperature.")
+@click.option(
+    "--mode",
+    type=click.Choice(("completion", "chat"), case_sensitive=False),
+    default="completion",
+    help="OpenAI API mode to call.",
+)
+@click.option("--timeout-seconds", type=float, default=120.0, help="Per-request timeout.")
+def api_eval_command(
+    endpoint_specs: tuple[str, ...],
+    prompt_file: Path | None,
+    output_path: Path | None,
+    max_tokens: int,
+    temperature: float,
+    mode: str,
+    timeout_seconds: float,
+) -> None:
+    """Run OpenAI-compatible completion eval against one or more endpoints."""
+
+    try:
+        _run_api_eval(
+            ApiEvalCommandRequest(
+                endpoint_specs=endpoint_specs,
+                prompt_file=prompt_file,
+                output_path=output_path,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                mode=mode.lower(),
+                timeout_seconds=timeout_seconds,
+            )
+        )
     except ModelError as exc:
         _raise_command_failure(exc)
 
@@ -1072,6 +1272,113 @@ def export_command(
         _raise_command_failure(exc)
 
 
+@cli.command("gguf-prune")
+@_shared_command_options
+@click.option(
+    "--scan-artifact",
+    type=click.Path(path_type=Path, dir_okay=False, exists=False, resolve_path=False),
+    default=None,
+    help="GGUF scan artifact consumed by static GGUF pruning.",
+)
+@click.option(
+    "--target-experts",
+    type=click.IntRange(min=1),
+    required=True,
+    help="Uniform number of experts to preserve per MoE layer.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False, resolve_path=False),
+    default=None,
+    help="Output path for the pruned GGUF checkpoint.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Validate and report planned GGUF pruning without writing an output checkpoint.",
+)
+@click.pass_context
+def gguf_prune_command(
+    ctx: click.Context,
+    model_id: str | None,
+    source_path: Path | None,
+    revision: str | None,
+    backend_name: str | None,
+    dtype: str | None,
+    seed: int | None,
+    artifact_root: Path | None,
+    scan_artifact: Path | None,
+    target_experts: int,
+    output_path: Path | None,
+    dry_run: bool,
+) -> None:
+    """Run static GGUF pruning and write a derived GGUF file."""
+
+    shared = _resolve_shared_context(
+        ctx.find_object(CliContext),
+        model_id=model_id,
+        source_path=source_path,
+        revision=revision,
+        backend_name=backend_name,
+        dtype=dtype,
+        seed=seed,
+        artifact_root=artifact_root,
+    )
+    try:
+        _run_gguf_prune(
+            GgufPruneCommandRequest(
+                shared=shared,
+                scan_artifact=scan_artifact,
+                target_experts=target_experts,
+                output_path=output_path,
+                dry_run=dry_run,
+            )
+        )
+    except ModelError as exc:
+        _raise_command_failure(exc)
+
+
+@cli.command("gguf-inspect")
+@_shared_command_options
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False, resolve_path=False),
+    default=None,
+    help="Optional output path for the GGUF inspection JSON.",
+)
+@click.pass_context
+def gguf_inspect_command(
+    ctx: click.Context,
+    model_id: str | None,
+    source_path: Path | None,
+    revision: str | None,
+    backend_name: str | None,
+    dtype: str | None,
+    seed: int | None,
+    artifact_root: Path | None,
+    output_path: Path | None,
+) -> None:
+    """Inspect a GGUF checkpoint and print canonical metadata."""
+
+    shared = _resolve_shared_context(
+        ctx.find_object(CliContext),
+        model_id=model_id,
+        source_path=source_path,
+        revision=revision,
+        backend_name=backend_name,
+        dtype=dtype,
+        seed=seed,
+        artifact_root=artifact_root,
+    )
+    try:
+        _run_gguf_inspect(GgufInspectCommandRequest(shared=shared, output_path=output_path))
+    except ModelError as exc:
+        _raise_command_failure(exc)
+
+
 def main(args: Sequence[str] | None = None, *, prog_name: str | None = None) -> int | None:
     """Execute the CLI entrypoint."""
 
@@ -1080,8 +1387,11 @@ def main(args: Sequence[str] | None = None, *, prog_name: str | None = None) -> 
 
 __all__ = [
     "BenchCommandRequest",
+    "ApiEvalCommandRequest",
     "CliContext",
     "ExportCommandRequest",
+    "GgufInspectCommandRequest",
+    "GgufPruneCommandRequest",
     "PruneCommandRequest",
     "ScanCommandRequest",
     "cli",
