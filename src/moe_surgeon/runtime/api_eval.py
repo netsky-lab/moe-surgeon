@@ -96,6 +96,59 @@ class ApiEvalResult:
         }
 
 
+@dataclass(frozen=True)
+class ApiEvalReportRow:
+    """One candidate endpoint summarized from an API eval artifact."""
+
+    artifact_path: str
+    endpoint_name: str
+    record_count: int
+    ok_count: int
+    error_count: int
+    empty_output_count: int
+    mean_elapsed_ms: float | None
+    mean_completion_tokens: float | None
+    mean_output_chars: float | None
+    recommended: bool = False
+
+    def to_payload(self) -> dict[str, object]:
+        """Return canonical JSON-friendly report row."""
+
+        return {
+            "artifact_path": self.artifact_path,
+            "endpoint_name": self.endpoint_name,
+            "record_count": self.record_count,
+            "ok_count": self.ok_count,
+            "error_count": self.error_count,
+            "empty_output_count": self.empty_output_count,
+            "mean_elapsed_ms": self.mean_elapsed_ms,
+            "mean_completion_tokens": self.mean_completion_tokens,
+            "mean_output_chars": self.mean_output_chars,
+            "recommended": self.recommended,
+        }
+
+
+@dataclass(frozen=True)
+class ApiEvalReport:
+    """Deterministic ranking of candidate endpoints across API eval artifacts."""
+
+    created_at: str
+    baseline_endpoint_name: str
+    artifact_paths: tuple[str, ...]
+    rows: tuple[ApiEvalReportRow, ...]
+
+    def to_payload(self) -> dict[str, object]:
+        """Return canonical JSON-friendly report payload."""
+
+        return {
+            "created_at": self.created_at,
+            "baseline_endpoint_name": self.baseline_endpoint_name,
+            "artifact_paths": list(self.artifact_paths),
+            "rows": [row.to_payload() for row in self.rows],
+            "recommended": self.rows[0].to_payload() if self.rows else None,
+        }
+
+
 def load_api_eval_prompts(path: str | Path) -> tuple[ApiEvalPrompt, ...]:
     """Load prompts from JSONL records or non-empty plain text lines."""
 
@@ -194,6 +247,64 @@ def write_api_eval_result(path: str | Path, result: ApiEvalResult) -> Path:
     return output_path
 
 
+def build_api_eval_report(
+    artifact_paths: Sequence[str | Path],
+    *,
+    baseline_endpoint_name: str = "original",
+) -> ApiEvalReport:
+    """Rank non-baseline endpoint summaries from one or more eval artifacts."""
+
+    if not artifact_paths:
+        raise ArtifactValidationError("api eval report requires at least one artifact")
+    rows: list[ApiEvalReportRow] = []
+    normalized_paths: list[str] = []
+    for artifact_path in artifact_paths:
+        path = Path(artifact_path)
+        normalized_paths.append(str(path))
+        payload = _load_api_eval_payload(path)
+        summary = payload.get("summary")
+        if not isinstance(summary, Mapping):
+            raise ArtifactValidationError(
+                "API eval artifact missing summary",
+                details={"artifact_path": str(path)},
+            )
+        for endpoint_name in sorted(summary):
+            if endpoint_name == baseline_endpoint_name:
+                continue
+            endpoint_summary = summary[endpoint_name]
+            if not isinstance(endpoint_summary, Mapping):
+                raise ArtifactValidationError(
+                    "API eval endpoint summary must be an object",
+                    details={"artifact_path": str(path), "endpoint_name": endpoint_name},
+                )
+            rows.append(_row_from_summary(path=path, endpoint_name=endpoint_name, summary=endpoint_summary))
+    if not rows:
+        raise ArtifactValidationError(
+            "api eval report found no candidate endpoints",
+            details={"baseline_endpoint_name": baseline_endpoint_name},
+        )
+    ranked_rows = sorted(rows, key=_report_row_sort_key)
+    recommended = ranked_rows[0]
+    final_rows = tuple(
+        replace_report_recommendation(row, recommended=row == recommended) for row in ranked_rows
+    )
+    return ApiEvalReport(
+        created_at=CANONICAL_DEFAULT_TIMESTAMP,
+        baseline_endpoint_name=baseline_endpoint_name,
+        artifact_paths=tuple(normalized_paths),
+        rows=final_rows,
+    )
+
+
+def write_api_eval_report(path: str | Path, report: ApiEvalReport) -> Path:
+    """Write a canonical API eval report JSON file."""
+
+    output_path = Path(path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(to_json(report.to_payload()), encoding="utf-8")
+    return output_path
+
+
 def summarize_api_eval_records(records: Sequence[ApiEvalRecord]) -> dict[str, object]:
     """Return deterministic aggregate metrics grouped by endpoint."""
 
@@ -220,6 +331,23 @@ def summarize_api_eval_records(records: Sequence[ApiEvalRecord]) -> dict[str, ob
             "mean_output_chars": _mean(output_lengths),
         }
     return summary
+
+
+def replace_report_recommendation(row: ApiEvalReportRow, *, recommended: bool) -> ApiEvalReportRow:
+    """Return ``row`` with a deterministic recommendation marker."""
+
+    return ApiEvalReportRow(
+        artifact_path=row.artifact_path,
+        endpoint_name=row.endpoint_name,
+        record_count=row.record_count,
+        ok_count=row.ok_count,
+        error_count=row.error_count,
+        empty_output_count=row.empty_output_count,
+        mean_elapsed_ms=row.mean_elapsed_ms,
+        mean_completion_tokens=row.mean_completion_tokens,
+        mean_output_chars=row.mean_output_chars,
+        recommended=recommended,
+    )
 
 
 def _run_one_completion(
@@ -339,6 +467,75 @@ def _optional_int(value: object) -> int | None:
     return value
 
 
+def _load_api_eval_payload(path: Path) -> Mapping[str, object]:
+    if not path.is_file():
+        raise ArtifactValidationError(
+            "API eval artifact does not exist",
+            details={"artifact_path": str(path)},
+        )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ArtifactValidationError(
+            "API eval artifact must be a JSON object",
+            details={"artifact_path": str(path)},
+        )
+    return payload
+
+
+def _row_from_summary(
+    *,
+    path: Path,
+    endpoint_name: str,
+    summary: Mapping[object, object],
+) -> ApiEvalReportRow:
+    return ApiEvalReportRow(
+        artifact_path=str(path),
+        endpoint_name=endpoint_name,
+        record_count=_required_int(summary, "record_count", path, endpoint_name),
+        ok_count=_required_int(summary, "ok_count", path, endpoint_name),
+        error_count=_required_int(summary, "error_count", path, endpoint_name),
+        empty_output_count=_required_int(summary, "empty_output_count", path, endpoint_name),
+        mean_elapsed_ms=_optional_float(summary.get("mean_elapsed_ms")),
+        mean_completion_tokens=_optional_float(summary.get("mean_completion_tokens")),
+        mean_output_chars=_optional_float(summary.get("mean_output_chars")),
+    )
+
+
+def _required_int(
+    payload: Mapping[object, object],
+    key: str,
+    path: Path,
+    endpoint_name: str,
+) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ArtifactValidationError(
+            "API eval summary field must be an integer",
+            details={"artifact_path": str(path), "endpoint_name": endpoint_name, "field": key},
+        )
+    return value
+
+
+def _optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def _report_row_sort_key(row: ApiEvalReportRow) -> tuple[int, int, int, float, str, str]:
+    elapsed = float("inf") if row.mean_elapsed_ms is None else row.mean_elapsed_ms
+    return (
+        row.error_count,
+        row.empty_output_count,
+        -row.ok_count,
+        elapsed,
+        row.endpoint_name,
+        row.artifact_path,
+    )
+
+
 def _mean(values: Sequence[int | float]) -> float | None:
     if not values:
         return None
@@ -348,11 +545,16 @@ def _mean(values: Sequence[int | float]) -> float | None:
 __all__ = [
     "ApiEvalEndpoint",
     "ApiEvalPrompt",
+    "ApiEvalReport",
+    "ApiEvalReportRow",
     "ApiEvalRecord",
     "ApiEvalResult",
+    "build_api_eval_report",
     "load_api_eval_prompts",
     "parse_api_eval_endpoint",
+    "replace_report_recommendation",
     "run_api_eval",
     "summarize_api_eval_records",
+    "write_api_eval_report",
     "write_api_eval_result",
 ]

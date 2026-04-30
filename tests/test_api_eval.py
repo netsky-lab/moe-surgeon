@@ -13,6 +13,7 @@ from moe_surgeon.cli.main import cli
 from moe_surgeon.runtime.api_eval import (
     ApiEvalEndpoint,
     ApiEvalPrompt,
+    build_api_eval_report,
     load_api_eval_prompts,
     parse_api_eval_endpoint,
     run_api_eval,
@@ -118,6 +119,54 @@ def test_run_api_eval_records_http_error_body(monkeypatch: Any) -> None:
     assert "parse failed" in result.records[0].error
 
 
+def test_build_api_eval_report_ranks_clean_candidate_first(tmp_path: Path) -> None:
+    p80 = tmp_path / "p80.json"
+    p64 = tmp_path / "p64.json"
+    p80.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "original": {"record_count": 8, "ok_count": 8, "error_count": 0, "empty_output_count": 0},
+                    "p80": {
+                        "record_count": 8,
+                        "ok_count": 8,
+                        "error_count": 0,
+                        "empty_output_count": 0,
+                        "mean_elapsed_ms": 12.0,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    p64.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "original": {"record_count": 8, "ok_count": 8, "error_count": 0, "empty_output_count": 0},
+                    "p64": {
+                        "record_count": 8,
+                        "ok_count": 7,
+                        "error_count": 1,
+                        "empty_output_count": 0,
+                        "mean_elapsed_ms": 10.0,
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = build_api_eval_report((p64, p80))
+
+    assert report.rows[0].endpoint_name == "p80"
+    assert report.rows[0].recommended is True
+    assert report.rows[1].endpoint_name == "p64"
+    recommended = report.to_payload()["recommended"]
+    assert isinstance(recommended, dict)
+    assert recommended["endpoint_name"] == "p80"
+
+
 def test_cli_api_eval_writes_result_json(tmp_path: Path, monkeypatch: Any) -> None:
     def fake_urlopen(request: object, timeout: float) -> _FakeResponse:
         return _FakeResponse()
@@ -151,3 +200,35 @@ def test_cli_api_eval_writes_result_json(tmp_path: Path, monkeypatch: Any) -> No
     assert payload["records"][0]["output_text"] == "ok"
     assert payload["summary"]["p64"]["ok_count"] == 1
     assert payload["summary"]["p64"]["empty_output_count"] == 0
+
+
+def test_cli_api_eval_report_writes_ranked_json(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "eval.json"
+    output_path = tmp_path / "report.json"
+    artifact_path.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "original": {"record_count": 1, "ok_count": 1, "error_count": 0, "empty_output_count": 0},
+                    "p80": {"record_count": 1, "ok_count": 1, "error_count": 0, "empty_output_count": 0},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        cli,
+        [
+            "api-eval-report",
+            "--artifact",
+            str(artifact_path),
+            "--output",
+            str(output_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "recommended_endpoint=p80" in result.output
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["recommended"]["endpoint_name"] == "p80"

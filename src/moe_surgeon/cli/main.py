@@ -124,6 +124,15 @@ class ApiEvalCommandRequest:
     timeout_seconds: float
 
 
+@dataclass(frozen=True)
+class ApiEvalReportCommandRequest:
+    """Parsed options for the ``api-eval-report`` command."""
+
+    artifact_paths: tuple[Path, ...]
+    output_path: Path | None
+    baseline_endpoint_name: str
+
+
 def _path_text(path: Path | None) -> str:
     return "-" if path is None else str(path)
 
@@ -1005,6 +1014,31 @@ def _run_api_eval(request: ApiEvalCommandRequest) -> int:
     return 0
 
 
+def _run_api_eval_report(request: ApiEvalReportCommandRequest) -> int:
+    from moe_surgeon.runtime.api_eval import build_api_eval_report, write_api_eval_report
+
+    if not request.artifact_paths:
+        raise ArtifactValidationError("api-eval-report requires at least one --artifact")
+    if request.output_path is None:
+        raise ArtifactValidationError("api-eval-report requires --output")
+    report = build_api_eval_report(
+        request.artifact_paths,
+        baseline_endpoint_name=request.baseline_endpoint_name,
+    )
+    output_path = write_api_eval_report(request.output_path, report)
+    recommended = report.rows[0]
+    click.echo("command=api-eval-report")
+    click.echo(f"artifact_count={len(report.artifact_paths)}")
+    click.echo(f"candidate_count={len(report.rows)}")
+    click.echo(f"baseline_endpoint_name={report.baseline_endpoint_name}")
+    click.echo(f"recommended_endpoint={recommended.endpoint_name}")
+    click.echo(f"recommended_artifact_path={recommended.artifact_path}")
+    click.echo(f"recommended_error_count={recommended.error_count}")
+    click.echo(f"recommended_empty_output_count={recommended.empty_output_count}")
+    click.echo(f"output_path={output_path}")
+    return 0
+
+
 @cli.command("api-eval")
 @click.option(
     "--endpoint",
@@ -1056,6 +1090,47 @@ def api_eval_command(
                 temperature=temperature,
                 mode=mode.lower(),
                 timeout_seconds=timeout_seconds,
+            )
+        )
+    except ModelError as exc:
+        _raise_command_failure(exc)
+
+
+@cli.command("api-eval-report")
+@click.option(
+    "--artifact",
+    "artifact_paths",
+    type=click.Path(path_type=Path, dir_okay=False, exists=False, resolve_path=False),
+    multiple=True,
+    help="API eval JSON artifact. Repeat to rank several candidates.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path, dir_okay=False, resolve_path=False),
+    default=None,
+    help="Output path for canonical API eval report JSON.",
+)
+@click.option(
+    "--baseline-endpoint",
+    "baseline_endpoint_name",
+    type=str,
+    default="original",
+    help="Endpoint name to exclude from candidate ranking.",
+)
+def api_eval_report_command(
+    artifact_paths: tuple[Path, ...],
+    output_path: Path | None,
+    baseline_endpoint_name: str,
+) -> None:
+    """Rank candidate endpoints from API eval artifacts."""
+
+    try:
+        _run_api_eval_report(
+            ApiEvalReportCommandRequest(
+                artifact_paths=artifact_paths,
+                output_path=output_path,
+                baseline_endpoint_name=baseline_endpoint_name,
             )
         )
     except ModelError as exc:

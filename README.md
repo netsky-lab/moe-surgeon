@@ -143,6 +143,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
   This path is intentionally static-only: it ranks experts from scan metrics,
   slices GGUF router/expert tensors along the expert axis, updates
   `gemma4.expert_count`, and preserves the rest of the GGUF tensor payload.
+- `api-eval` runs deterministic smoke comparisons against OpenAI-compatible
+  completion or chat endpoints, while `api-eval-report` ranks multiple eval
+  artifacts and marks the cleanest non-baseline candidate as recommended.
 
 ## Quality commands
 
