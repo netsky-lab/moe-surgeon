@@ -14,6 +14,16 @@ Identify low-utility experts and produce smaller checkpoints without editing sou
 - Experts per MoE layer: 128
 - Top-k experts per token: 8
 
+## Secondary target
+
+- Model: Qwen3.5-MoE / Qwen3.6 35B-A3B GGUF
+- GGUF architecture: qwen35moe
+- Blocks: 40
+- Experts per MoE layer: 256
+- Top-k experts per token: 8
+- Hybrid stack: linear-attention/SSM blocks with full-attention blocks every
+  fourth layer
+
 ## Research-backed architecture notes
 
 ### Gemma4 topology
@@ -143,6 +153,9 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
   This path is intentionally static-only: it ranks experts from scan metrics,
   slices GGUF router/expert tensors along the expert axis, updates
   `gemma4.expert_count`, and preserves the rest of the GGUF tensor payload.
+  Prune/apply is currently Gemma4-only; Qwen3.5-MoE GGUF support is scan-only
+  until its expert, shared-expert, and hybrid-attention invariants are covered
+  by a dedicated apply path.
 - `api-eval` runs deterministic smoke comparisons against OpenAI-compatible
   completion or chat endpoints, while `api-eval-report` ranks multiple eval
   artifacts and marks the cleanest non-baseline candidate as recommended.

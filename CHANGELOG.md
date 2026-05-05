@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added Qwen3.5-MoE GGUF topology support for `general.architecture=qwen35moe`,
+  including metadata-first detection, hybrid linear/full-attention layer
+  annotations, shared-expert tensor validation, router-only static scan support,
+  and offline regressions backed by the real Qwen3.6 35B-A3B GGUF tensor
+  layout.
 - Added Gemma4 GGUF support with a metadata-first reader, `gemma4-gguf`
   backend registration, static scan support for F32 router tensors, and a
   `gguf-prune` CLI path that writes a derived pruned `.gguf` by slicing

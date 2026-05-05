@@ -171,11 +171,13 @@ def build_backend_registry() -> "BackendRegistry":
 
     from moe_surgeon.models.gemma4 import default_registry_entry
     from moe_surgeon.models.gguf import default_registry_entry as gguf_default_registry_entry
+    from moe_surgeon.models.gguf import qwen35moe_registry_entry
     from moe_surgeon.models.registry import BackendRegistry
 
     registry = BackendRegistry()
     default_entries: tuple[tuple[ModelBackend, int], ...] = (
         gguf_default_registry_entry(),
+        qwen35moe_registry_entry(),
         default_registry_entry(),
     )
     for backend, priority in sorted(default_entries, key=lambda entry: (-entry[1], entry[0].name)):

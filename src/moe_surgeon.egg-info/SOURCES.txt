@@ -49,6 +49,7 @@ tests/test_export_pipeline.py
 tests/test_models_checkpoints.py
 tests/test_models_gemma4.py
 tests/test_models_gguf.py
+tests/test_models_qwen35moe_gguf.py
 tests/test_models_registry.py
 tests/test_prune_apply.py
 tests/test_prune_planner.py

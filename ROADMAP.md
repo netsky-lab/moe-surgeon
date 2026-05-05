@@ -8,6 +8,77 @@
 
 ## Backlog (implementation tasks)
 
+## Qwen3.5-MoE functional backlog
+
+1. Q1 — Qwen3.5-MoE GGUF topology scan
+Files: `src/moe_surgeon/models/gguf.py`, `src/moe_surgeon/analysis/scan.py`
+Description: Detect `general.architecture=qwen35moe`, validate block count,
+expert count, top-k, expert/shared-expert tensor families, and hybrid
+linear/full-attention metadata without materializing quantized expert payloads.
+Acceptance criteria: real Qwen3.6 35B-A3B GGUF scan emits 40 layers, 10,240
+expert stats, 256 experts per layer, top_k=8, and marks SSM/full-attention
+layers deterministically.
+
+2. Q2 — Qwen3.5-MoE HF/NVFP4 topology scan
+Files: `src/moe_surgeon/models/qwen35moe.py`, `src/moe_surgeon/analysis/scan.py`
+Description: Add a safetensors/NVFP4 backend for `model_type=qwen3_5_moe`
+using `text_config`, `model.language_model.layers.{L}.mlp.gate`, per-expert
+projection tensors, shared experts, and quantization sidecar tensors.
+Acceptance criteria: local `model.safetensors` metadata scan validates 40
+layers, 256 experts, shared experts, layer_types, and rejects missing
+weight_scale/input_scale families before scan.
+
+3. Q3 — Qwen3.5-MoE prune plan artifact
+Files: `src/moe_surgeon/prune/planner.py`, `src/moe_surgeon/prune/qwen35moe.py`
+Description: Generate Qwen-specific keep/drop/remap plans without applying
+them, including explicit preservation of shared experts and hybrid attention
+tensors.
+Acceptance criteria: plans cover every MoE layer, never include shared-expert
+or SSM tensors in expert-remap sets, and fail fast on non-uniform or incomplete
+expert coverage.
+
+4. Q4 — Qwen3.5-MoE GGUF apply
+Files: `src/moe_surgeon/prune/gguf.py`
+Description: Slice packed GGUF expert tensors
+`ffn_gate_exps/ffn_up_exps/ffn_down_exps`, router `ffn_gate_inp.weight`, and
+update `qwen35moe.expert_count` while preserving shared experts, SSM tensors,
+and attention tensors.
+Acceptance criteria: derived GGUF loads in llama.cpp, source file hash is
+unchanged, tensor inventory diff lists only intended MoE tensor rewrites, and
+post-write inspect validates every layer.
+
+5. Q5 — Qwen3.5-MoE HF/NVFP4 apply
+Files: `src/moe_surgeon/prune/apply.py`, `src/moe_surgeon/export/`
+Description: Apply remaps to per-expert safetensors directories, including
+all quant sidecars (`input_scale`, `weight_scale`, `weight_scale_2`) for
+gate/up/down projections.
+Acceptance criteria: derived checkpoint has canonical safetensors/index
+metadata, all expert ids are compacted, quant sidecar coverage matches weight
+coverage, and shared experts are byte-preserved.
+
+6. Q6 — Qwen-aware eval and memory report
+Files: `src/moe_surgeon/runtime/api_eval.py`, `src/moe_surgeon/runtime/`
+Description: Extend eval artifacts with model size, expert count, load mode,
+context length, KV/cache/state notes, and llama.cpp/vLLM memory snapshots.
+Acceptance criteria: reports separate weight reduction from KV/Mamba/state
+allocator pressure and can rank candidates without treating TurboQuant
+chat-template errors as pruning failures.
+
+7. Q7 — Qwen budget search
+Files: `src/moe_surgeon/cli/main.py`, `src/moe_surgeon/prune/`
+Description: Add one command that scans, generates multiple Qwen budgets,
+applies them, runs eval, and recommends a candidate.
+Acceptance criteria: repeated runs with the same source and prompt pack produce
+the same plan ordering, artifacts, and recommendation.
+
+8. Q8 — Qwen integration hardening
+Files: `tests/*`, integration docs
+Description: Add opt-in RunPod integration coverage for GGUF scan, apply/load,
+raw completion eval, and chat eval with known TurboQuant control-token
+diagnostics.
+Acceptance criteria: offline tests remain deterministic; integration tests
+document exact model path, runtime command, and expected artifact summaries.
+
 1. P1 — Define canonical data schemas and ordering contracts (Priority 1)
 Files: `src/moe_surgeon/schemas.py`
 Description: Finalize `ModelHandle`, `LayerTopology`, `RouterState`, `ExpertStats`, `ActivationStats`, `PruneCandidate`, `PrunePlanItem`, `PrunePlan`, and `RunArtifactManifest` with explicit schema version, deterministic sort keys, stable identity fields, and invariant validation helpers.

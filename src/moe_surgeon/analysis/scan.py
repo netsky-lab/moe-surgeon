@@ -191,6 +191,29 @@ def _require_tensor(
     return value
 
 
+def _optional_metric_tensor(
+    state_dict: Mapping[str, object],
+    *,
+    layer: LayerTopology,
+    tensor_role: str,
+    default: torch.Tensor,
+) -> torch.Tensor:
+    tensor_key = layer.module_paths.get(tensor_role)
+    if tensor_key is None:
+        return default
+    value = state_dict.get(tensor_key)
+    if value is None:
+        return default
+    if not isinstance(value, torch.Tensor):
+        raise ShapeInvariantViolationError(
+            "scan optional metric tensor must be torch.Tensor",
+            layer_index=layer.layer_index,
+            tensor_key=tensor_key,
+            details={"tensor_role": tensor_role, "value_type": type(value).__name__},
+        )
+    return value
+
+
 def _enrich_router_state(
     router_state: RouterState,
     *,
@@ -235,11 +258,11 @@ def _metric_tensors_for_layer(
             )
         return state_dict
 
-    tensor_names = [
-        layer.module_paths["router_proj"],
-        layer.module_paths["router_scale"],
-        layer.module_paths["router_per_expert_scale"],
-    ]
+    tensor_names = [layer.module_paths["router_proj"]]
+    for tensor_role in ("router_scale", "router_per_expert_scale"):
+        tensor_key = layer.module_paths.get(tensor_role)
+        if tensor_key is not None:
+            tensor_names.append(tensor_key)
     return checkpoint.load_tensors(tensor_names)
 
 
@@ -590,17 +613,17 @@ def scan_model(
             layer=layer,
             tensor_role="router_proj",
         )
-        route_scale = _require_tensor(
+        route_scale = _optional_metric_tensor(
             layer_metric_tensors,
-            bundle=prepared_bundle,
             layer=layer,
             tensor_role="router_scale",
+            default=torch.ones((), dtype=torch.float32),
         )
-        per_expert_scale = _require_tensor(
+        per_expert_scale = _optional_metric_tensor(
             layer_metric_tensors,
-            bundle=prepared_bundle,
             layer=layer,
             tensor_role="router_per_expert_scale",
+            default=torch.ones((layer.expert_count,), dtype=torch.float32),
         )
         router_state = _enrich_router_state(
             router_state,
@@ -614,13 +637,14 @@ def scan_model(
             tensor_role="router_proj",
             expected_rank=2,
         )
-        _validate_metric_tensor(
-            per_expert_scale,
-            bundle=prepared_bundle,
-            layer=layer,
-            tensor_role="router_per_expert_scale",
-            expected_rank=1,
-        )
+        if "router_per_expert_scale" in layer.module_paths:
+            _validate_metric_tensor(
+                per_expert_scale,
+                bundle=prepared_bundle,
+                layer=layer,
+                tensor_role="router_per_expert_scale",
+                expected_rank=1,
+            )
 
         layer_stats, layer_summary = build_expert_stats(
             layer_index=layer.layer_index,
