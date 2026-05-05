@@ -1,4 +1,4 @@
-"""Static GGUF prune/export path for Gemma4 MoE checkpoints."""
+"""Static GGUF prune/export path for packed MoE checkpoints."""
 
 from __future__ import annotations
 
@@ -118,11 +118,12 @@ def prune_gguf_static(
     output_path: str | Path | None,
     dry_run: bool = False,
 ) -> GgufPruneResult:
-    """Write a statically pruned Gemma4 GGUF checkpoint.
+    """Write a statically pruned GGUF MoE checkpoint.
 
     Expert selection is derived from static scan ranks. This path rewrites only
     tensors whose first raw data axis is the expert axis and updates
-    ``gemma4.expert_count``. It does not attempt runtime activation profiling.
+    architecture-specific expert-count metadata. It does not attempt runtime
+    activation profiling.
     """
 
     checkpoint = open_local_gguf_checkpoint(checkpoint_path)
@@ -193,8 +194,13 @@ def prune_gguf_static(
         from gguf import GGUFReader, GGUFWriter
 
         reader = GGUFReader(checkpoint.checkpoint_path, mode="r")
-        writer = GGUFWriter(tmp_output, arch="gemma4")
-        _write_fields(writer, checkpoint.fields, target_experts=target_experts)
+        writer = GGUFWriter(tmp_output, arch=checkpoint.architecture)
+        _write_fields(
+            writer,
+            checkpoint.fields,
+            architecture=checkpoint.architecture,
+            target_experts=target_experts,
+        )
         for tensor in reader.tensors:
             name = str(tensor.name)
             layer_index = _parse_layer_index(name)
@@ -281,10 +287,10 @@ def inspect_gguf(checkpoint_path: str | Path) -> GgufInspectResult:
         architecture=checkpoint.architecture,
         file_size_bytes=checkpoint.checkpoint_path.stat().st_size,
         tensor_count=len(checkpoint.tensors),
-        expert_count=_field_int(fields, "gemma4.expert_count"),
-        top_k=_field_int(fields, "gemma4.expert_used_count"),
-        block_count=_field_int(fields, "gemma4.block_count"),
-        hidden_size=_field_int(fields, "gemma4.embedding_length"),
+        expert_count=_field_int(fields, _expert_count_metadata_key(checkpoint.architecture)),
+        top_k=_field_int(fields, _expert_used_count_metadata_key(checkpoint.architecture)),
+        block_count=_field_int(fields, _block_count_metadata_key(checkpoint.architecture)),
+        hidden_size=_field_int(fields, _embedding_length_metadata_key(checkpoint.architecture)),
         model_size_label=_field_str(fields, "general.size_label"),
         quantization_version=_field_int(fields, "general.quantization_version"),
     )
@@ -365,12 +371,20 @@ def _build_layer_reports(
 
 
 def _planned_rewritten_tensor_keys(layers: Sequence[LayerTopology]) -> tuple[str, ...]:
+    prunable_roles = {
+        "experts_down_proj",
+        "experts_gate_proj",
+        "experts_gate_up_proj",
+        "experts_up_proj",
+        "router_per_expert_scale",
+        "router_proj",
+    }
     return tuple(
         sorted(
             tensor_key
             for layer in layers
             for role, tensor_key in layer.module_paths.items()
-            if role in {"router_proj", "router_per_expert_scale", "experts_gate_up_proj", "experts_down_proj"}
+            if role in prunable_roles
         )
     )
 
@@ -412,13 +426,15 @@ def _validate_pruned_output(
     if len(target_counts) != 1:
         raise TopologyMismatchError("GGUF prune validation requires uniform target experts")
     target_experts = next(iter(target_counts))
-    if checkpoint.fields.get("gemma4.expert_count") != target_experts:
+    expert_count_key = _expert_count_metadata_key(checkpoint.architecture)
+    if checkpoint.fields.get(expert_count_key) != target_experts:
         raise TopologyMismatchError(
             "GGUF prune output expert_count metadata mismatch",
             model_id=checkpoint.model_id,
             details={
                 "expected_expert_count": target_experts,
-                "actual_expert_count": checkpoint.fields.get("gemma4.expert_count"),
+                "actual_expert_count": checkpoint.fields.get(expert_count_key),
+                "metadata_key": expert_count_key,
             },
         )
     if len(checkpoint.tensors) != source_tensor_count:
@@ -431,28 +447,16 @@ def _validate_pruned_output(
             },
         )
     for report in reports:
-        prefix = f"blk.{report.layer_index}"
-        expected = report.target_expert_count
-        _validate_tensor_axis(
-            checkpoint.tensors[f"{prefix}.ffn_gate_inp.weight"].data_shape,
-            expected,
-            axis=0,
-        )
-        _validate_tensor_axis(
-            checkpoint.tensors[f"{prefix}.ffn_down_exps.scale"].data_shape,
-            expected,
-            axis=-1,
-        )
-        _validate_tensor_axis(
-            checkpoint.tensors[f"{prefix}.ffn_gate_up_exps.weight"].shape,
-            expected,
-            axis=-1,
-        )
-        _validate_tensor_axis(
-            checkpoint.tensors[f"{prefix}.ffn_down_exps.weight"].shape,
-            expected,
-            axis=-1,
-        )
+        if checkpoint.architecture == "gemma4":
+            _validate_gemma4_pruned_layer(checkpoint.tensors, report=report)
+        elif checkpoint.architecture == "qwen35moe":
+            _validate_qwen35moe_pruned_layer(checkpoint.tensors, report=report)
+        else:
+            raise TopologyMismatchError(
+                "GGUF prune validation does not support architecture",
+                model_id=checkpoint.model_id,
+                details={"architecture": checkpoint.architecture},
+            )
 
 
 def _validate_tensor_axis(shape: Sequence[int], expected_experts: int, *, axis: int) -> None:
@@ -484,11 +488,18 @@ def _field_str(fields: Mapping[str, object], key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _write_fields(writer: Any, fields: Mapping[str, object], *, target_experts: int) -> None:
+def _write_fields(
+    writer: Any,
+    fields: Mapping[str, object],
+    *,
+    architecture: str,
+    target_experts: int,
+) -> None:
+    expert_count_key = _expert_count_metadata_key(architecture)
     for key, value in sorted(fields.items()):
         if key.startswith("GGUF.") or key == "general.architecture":
             continue
-        output_value = target_experts if key == "gemma4.expert_count" else value
+        output_value = target_experts if key == expert_count_key else value
         _add_field(writer, key, output_value)
 
 
@@ -572,10 +583,97 @@ def _is_expert_axis_tensor(name: str) -> bool:
         (
             ".ffn_gate_inp.weight",
             ".ffn_down_exps.scale",
+            ".ffn_gate_exps.weight",
             ".ffn_gate_up_exps.weight",
+            ".ffn_up_exps.weight",
             ".ffn_down_exps.weight",
         )
     )
+
+
+def _validate_gemma4_pruned_layer(
+    tensors: Mapping[str, object],
+    *,
+    report: GgufPruneLayerReport,
+) -> None:
+    prefix = f"blk.{report.layer_index}"
+    expected = report.target_expert_count
+    _validate_tensor_axis(
+        tensors[f"{prefix}.ffn_gate_inp.weight"].data_shape,  # type: ignore[attr-defined]
+        expected,
+        axis=0,
+    )
+    _validate_tensor_axis(
+        tensors[f"{prefix}.ffn_down_exps.scale"].data_shape,  # type: ignore[attr-defined]
+        expected,
+        axis=-1,
+    )
+    _validate_tensor_axis(
+        tensors[f"{prefix}.ffn_gate_up_exps.weight"].shape,  # type: ignore[attr-defined]
+        expected,
+        axis=-1,
+    )
+    _validate_tensor_axis(
+        tensors[f"{prefix}.ffn_down_exps.weight"].shape,  # type: ignore[attr-defined]
+        expected,
+        axis=-1,
+    )
+
+
+def _validate_qwen35moe_pruned_layer(
+    tensors: Mapping[str, object],
+    *,
+    report: GgufPruneLayerReport,
+) -> None:
+    prefix = f"blk.{report.layer_index}"
+    expected = report.target_expert_count
+    _validate_tensor_axis(
+        tensors[f"{prefix}.ffn_gate_inp.weight"].data_shape,  # type: ignore[attr-defined]
+        expected,
+        axis=0,
+    )
+    for tensor_name in (
+        f"{prefix}.ffn_gate_exps.weight",
+        f"{prefix}.ffn_up_exps.weight",
+        f"{prefix}.ffn_down_exps.weight",
+    ):
+        _validate_tensor_axis(
+            tensors[tensor_name].shape,  # type: ignore[attr-defined]
+            expected,
+            axis=-1,
+        )
+
+
+def _expert_count_metadata_key(architecture: str) -> str:
+    if architecture == "gemma4":
+        return "gemma4.expert_count"
+    if architecture == "qwen35moe":
+        return "qwen35moe.expert_count"
+    return f"{architecture}.expert_count"
+
+
+def _expert_used_count_metadata_key(architecture: str) -> str:
+    if architecture == "gemma4":
+        return "gemma4.expert_used_count"
+    if architecture == "qwen35moe":
+        return "qwen35moe.expert_used_count"
+    return f"{architecture}.expert_used_count"
+
+
+def _block_count_metadata_key(architecture: str) -> str:
+    if architecture == "gemma4":
+        return "gemma4.block_count"
+    if architecture == "qwen35moe":
+        return "qwen35moe.block_count"
+    return f"{architecture}.block_count"
+
+
+def _embedding_length_metadata_key(architecture: str) -> str:
+    if architecture == "gemma4":
+        return "gemma4.embedding_length"
+    if architecture == "qwen35moe":
+        return "qwen35moe.embedding_length"
+    return f"{architecture}.embedding_length"
 
 
 __all__ = [

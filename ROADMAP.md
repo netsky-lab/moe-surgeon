@@ -37,7 +37,7 @@ Acceptance criteria: plans cover every MoE layer, never include shared-expert
 or SSM tensors in expert-remap sets, and fail fast on non-uniform or incomplete
 expert coverage.
 
-4. Q4 — Qwen3.5-MoE GGUF apply
+4. Q4 — Qwen3.5-MoE GGUF apply (initial static path delivered)
 Files: `src/moe_surgeon/prune/gguf.py`
 Description: Slice packed GGUF expert tensors
 `ffn_gate_exps/ffn_up_exps/ffn_down_exps`, router `ffn_gate_inp.weight`, and

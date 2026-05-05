@@ -169,11 +169,11 @@ All ranking is deterministic with tie-breakers on score, secondary metric, and e
 - `gguf-prune` consumes a GGUF `--source-path` plus a compatible GGUF scan
   artifact and writes a derived `.gguf` with a uniform static expert budget.
   This path is intentionally static-only: it ranks experts from scan metrics,
-  slices GGUF router/expert tensors along the expert axis, updates
-  `gemma4.expert_count`, and preserves the rest of the GGUF tensor payload.
-  Prune/apply is currently Gemma4-only; Qwen3.5-MoE GGUF support is scan-only
-  until its expert, shared-expert, and hybrid-attention invariants are covered
-  by a dedicated apply path.
+  slices supported GGUF router/expert tensors along the expert axis, updates
+  architecture-specific expert-count metadata, and preserves the rest of the
+  GGUF tensor payload. Gemma4 and Qwen3.5-MoE GGUF are currently supported;
+  Qwen shared experts, SSM tensors, and attention tensors are preserved rather
+  than remapped.
 - `api-eval` runs deterministic smoke comparisons against OpenAI-compatible
   completion or chat endpoints, while `api-eval-report` ranks multiple eval
   artifacts and marks the cleanest non-baseline candidate as recommended.

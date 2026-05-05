@@ -853,11 +853,13 @@ def _run_gguf_prune(request: GgufPruneCommandRequest) -> int:
     scan_handle = scan_result.manifest.model_handle
     if scan_handle is None:
         raise TopologyMismatchError("scan artifact must include model_handle")
-    if scan_handle.backend_name != "gemma4-gguf":
+    supported_gguf_backends = {"gemma4-gguf", "qwen35moe-gguf"}
+    if scan_handle.backend_name not in supported_gguf_backends:
         raise BackendMismatchError(
-            "gguf-prune requires a gemma4-gguf scan artifact",
+            "gguf-prune requires a supported GGUF MoE scan artifact",
             model_id=scan_handle.model_id,
             backend_name=scan_handle.backend_name,
+            details={"supported_backends": ",".join(sorted(supported_gguf_backends))},
         )
     _validate_context_model_handle(request.shared, scan_handle)
     output_path = request.output_path

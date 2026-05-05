@@ -7,6 +7,10 @@
   annotations, shared-expert tensor validation, router-only static scan support,
   and offline regressions backed by the real Qwen3.6 35B-A3B GGUF tensor
   layout.
+- Extended `gguf-prune` to support Qwen3.5-MoE GGUF outputs by slicing
+  `ffn_gate_inp.weight`, `ffn_gate_exps.weight`, `ffn_up_exps.weight`, and
+  `ffn_down_exps.weight`, updating `qwen35moe.expert_count`, and preserving
+  shared-expert, SSM, and attention tensors as immutable passthrough payloads.
 - Added Gemma4 GGUF support with a metadata-first reader, `gemma4-gguf`
   backend registration, static scan support for F32 router tensors, and a
   `gguf-prune` CLI path that writes a derived pruned `.gguf` by slicing

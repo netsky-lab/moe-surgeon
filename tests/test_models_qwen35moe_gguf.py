@@ -1,15 +1,22 @@
 from __future__ import annotations
 
-import pytest
+from pathlib import Path
 
+import numpy as np
+import pytest
+from gguf import GGUFWriter
+
+from moe_surgeon.analysis.scan import load_local_scan_bundle, scan_model
 from moe_surgeon.models.backend import BackendSignature, LoadedBackendBundle, build_backend_registry
 from moe_surgeon.models.errors import ShapeInvariantViolationError, TopologyMismatchError
 from moe_surgeon.models.gguf import (
     QWEN35MOE_REGISTRY_PRIORITY,
     GgufTensorMetadata,
     Qwen35MoeGgufBackend,
+    open_local_gguf_checkpoint,
     qwen35moe_registry_entry,
 )
+from moe_surgeon.prune.gguf import inspect_gguf, prune_gguf_static
 from moe_surgeon.schemas import ModelHandle
 
 
@@ -110,6 +117,34 @@ def _state() -> dict[str, GgufTensorMetadata]:
     return tensors
 
 
+def _write_tiny_qwen35moe_gguf(path: Path) -> Path:
+    writer = GGUFWriter(path, arch="qwen35moe")
+    writer.add_uint32("qwen35moe.block_count", 1)
+    writer.add_uint32("qwen35moe.context_length", 32)
+    writer.add_uint32("qwen35moe.embedding_length", 5)
+    writer.add_uint32("qwen35moe.expert_count", 4)
+    writer.add_uint32("qwen35moe.expert_used_count", 2)
+    writer.add_uint32("qwen35moe.expert_feed_forward_length", 3)
+    writer.add_uint32("qwen35moe.expert_shared_feed_forward_length", 3)
+    writer.add_uint32("qwen35moe.full_attention_interval", 4)
+    writer.add_tensor(
+        "blk.0.ffn_gate_inp.weight",
+        np.arange(20, dtype=np.float32).reshape(4, 5),
+    )
+    writer.add_tensor("blk.0.ffn_gate_inp_shexp.weight", np.ones((5,), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_gate_exps.weight", np.ones((4, 3, 5), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_up_exps.weight", np.ones((4, 3, 5), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_down_exps.weight", np.ones((4, 5, 3), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_gate_shexp.weight", np.ones((3, 5), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_up_shexp.weight", np.ones((3, 5), dtype=np.float32))
+    writer.add_tensor("blk.0.ffn_down_shexp.weight", np.ones((5, 3), dtype=np.float32))
+    writer.write_header_to_file()
+    writer.write_kv_data_to_file()
+    writer.write_tensors_to_file()
+    writer.close()
+    return path
+
+
 def test_qwen35moe_gguf_backend_supports_architecture_signature() -> None:
     backend = Qwen35MoeGgufBackend()
 
@@ -208,3 +243,55 @@ def test_qwen35moe_gguf_rejects_expert_shape_mismatch() -> None:
         backend.validate_layer(bundle, layer=layer)
 
     assert "tensor_role=experts_gate_proj" in str(exc_info.value)
+
+
+def test_qwen35moe_gguf_scan_uses_router_tensor_without_per_expert_scale(tmp_path: Path) -> None:
+    checkpoint_path = _write_tiny_qwen35moe_gguf(tmp_path / "tiny-qwen.gguf")
+    bundle, backend = load_local_scan_bundle(checkpoint_path)
+
+    result = scan_model(bundle, backend=backend)
+
+    assert result.manifest.model_handle is not None
+    assert result.manifest.model_handle.backend_name == "qwen35moe-gguf"
+    assert len(result.layers) == 1
+    assert len(result.expert_stats) == 4
+    assert result.router_states[0].per_expert_scale_shape is None
+
+
+def test_prune_gguf_static_writes_qwen35moe_expert_axis_tensors(tmp_path: Path) -> None:
+    checkpoint_path = _write_tiny_qwen35moe_gguf(tmp_path / "tiny-qwen.gguf")
+    bundle, backend = load_local_scan_bundle(checkpoint_path)
+    scan_result = scan_model(bundle, backend=backend)
+
+    output_path = tmp_path / "tiny-qwen-pruned.gguf"
+    result = prune_gguf_static(
+        checkpoint_path,
+        scan_result=scan_result,
+        target_experts=3,
+        output_path=output_path,
+    )
+    pruned = open_local_gguf_checkpoint(output_path)
+
+    assert result.dry_run is False
+    assert result.rewritten_tensor_count == 4
+    assert result.copied_tensor_count == len(open_local_gguf_checkpoint(checkpoint_path).tensors) - 4
+    assert pruned.fields["qwen35moe.expert_count"] == 3
+    assert pruned.tensors["blk.0.ffn_gate_inp.weight"].data_shape == (3, 5)
+    assert pruned.tensors["blk.0.ffn_gate_exps.weight"].shape[-1] == 3
+    assert pruned.tensors["blk.0.ffn_up_exps.weight"].shape[-1] == 3
+    assert pruned.tensors["blk.0.ffn_down_exps.weight"].shape[-1] == 3
+    assert pruned.tensors["blk.0.ffn_gate_inp_shexp.weight"].shape == (5,)
+    assert pruned.tensors["blk.0.ffn_gate_shexp.weight"].shape == (5, 3)
+    assert (tmp_path / "tiny-qwen-pruned.gguf.manifest.json").is_file()
+
+
+def test_inspect_gguf_returns_qwen35moe_inventory(tmp_path: Path) -> None:
+    checkpoint_path = _write_tiny_qwen35moe_gguf(tmp_path / "tiny-qwen.gguf")
+
+    result = inspect_gguf(checkpoint_path)
+
+    assert result.architecture == "qwen35moe"
+    assert result.expert_count == 4
+    assert result.top_k == 2
+    assert result.block_count == 1
+    assert result.hidden_size == 5
